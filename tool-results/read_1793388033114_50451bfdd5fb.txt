@@ -1,0 +1,1577 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useRef, useState } from "react";
+     4→import { Button } from "@/components/ui/button";
+     5→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+     6→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+     7→import { Textarea } from "@/components/ui/textarea";
+     8→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+     9→import { Switch } from "@/components/ui/switch";
+    10→import { Badge } from "@/components/ui/badge";
+    11→import { Input } from "@/components/ui/input";
+    12→import { Separator } from "@/components/ui/separator";
+    13→import {
+    14→  AlertTriangle,
+    15→  Check,
+    16→  ClipboardPaste,
+    17→  Copy,
+    18→  Download,
+    19→  FileDown,
+    20→  FileText,
+    21→  FileUp,
+    22→  Layers,
+    23→  Loader2,
+    24→  MessageSquareWarning,
+    25→  PenLine,
+    26→  Pencil,
+    27→  RefreshCw,
+    28→  ScanSearch,
+    29→  ShieldCheck,
+    30→  Sparkles,
+    31→  Trash2,
+    32→  X,
+    33→} from "lucide-react";
+    34→import type {
+    35→  BatchFileResult,
+    36→  DetectResult,
+    37→  ExtractMeta,
+    38→  HumanizeBatchJobState,
+    39→  HumanizeJobState,
+    40→  HumanizeResponse,
+    41→  Intensity,
+    42→  Lang,
+    43→  Tone,
+    44→} from "@/lib/shared-types";
+    45→
+    46→// Etiquetas visibles de los idiomas admitidos
+    47→const LANG_LABELS: Record<Lang, string> = {
+    48→  es: "español",
+    49→  en: "inglés",
+    50→  fr: "francés",
+    51→  it: "italiano",
+    52→  pt: "portugués",
+    53→  de: "alemán",
+    54→};
+    55→
+    56→// ---------- utilidades visuales ----------
+    57→
+    58→function scoreHex(score: number): string {
+    59→  if (score < 35) return "#059669";
+    60→  if (score < 65) return "#d97706";
+    61→  return "#dc2626";
+    62→}
+    63→
+    64→function scoreBg(score: number): string {
+    65→  if (score < 35) return "bg-emerald-600";
+    66→  if (score < 65) return "bg-amber-600";
+    67→  return "bg-red-600";
+    68→}
+    69→
+    70→function levelBadgeClass(key: string): string {
+    71→  if (key === "human") return "bg-emerald-100 text-emerald-800 border-emerald-200";
+    72→  if (key === "mixed") return "bg-amber-100 text-amber-800 border-amber-200";
+    73→  return "bg-red-100 text-red-800 border-red-200";
+    74→}
+    75→
+    76→function Gauge({ value, size = 190 }: { value: number; size?: number }) {
+    77→  const r = 70;
+    78→  const c = 2 * Math.PI * r;
+    79→  const color = scoreHex(value);
+    80→  return (
+    81→    <svg width={size} height={size} viewBox="0 0 180 180" role="img" aria-label={`Probabilidad de IA: ${value}%`}>
+    82→      <circle cx="90" cy="90" r={r} stroke="#e8ebe8" strokeWidth="14" fill="none" />
+    83→      <circle
+    84→        cx="90"
+    85→        cy="90"
+    86→        r={r}
+    87→        stroke={color}
+    88→        strokeWidth="14"
+    89→        fill="none"
+    90→        strokeLinecap="round"
+    91→        strokeDasharray={`${(value / 100) * c} ${c}`}
+    92→        transform="rotate(-90 90 90)"
+    93→        style={{ transition: "stroke-dasharray 0.8s ease, stroke 0.8s ease" }}
+    94→      />
+    95→      <text x="90" y="92" textAnchor="middle" fontSize="42" fontWeight="700" fill={color}>
+    96→        {value}%
+    97→      </text>
+    98→      <text x="90" y="118" textAnchor="middle" fontSize="12.5" fill="#6b7280">
+    99→        probabilidad de IA
+   100→      </text>
+   101→    </svg>
+   102→  );
+   103→}
+   104→
+   105→function StatTile({ label, value }: { label: string; value: string }) {
+   106→  return (
+   107→    <div className="rounded-lg border bg-muted/40 px-3 py-2.5 text-center">
+   108→      <div className="text-lg font-semibold leading-tight">{value}</div>
+   109→      <div className="mt-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+   110→    </div>
+   111→  );
+   112→}
+   113→
+   114→// ---------- cliente fetch tolerante ----------
+   115→
+   116→// Parser JSON seguro: si el servidor o un proxy intermedio devuelve HTML,
+   117→// una respuesta vacía o corta la conexión, mostramos un mensaje claro
+   118→// en lugar del error críptico "JSON.parse: unexpected character".
+   119→async function fetchJson<T>(url: string, init: RequestInit, timeoutMs = 60_000): Promise<T> {
+   120→  const ctrl = new AbortController();
+   121→  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+   122→  let res: Response;
+   123→  try {
+   124→    res = await fetch(url, { ...init, signal: ctrl.signal });
+   125→  } catch {
+   126→    clearTimeout(timer);
+   127→    throw new Error(
+   128→      "No se pudo contactar con el servidor o la petición ha tardado demasiado. Comprueba tu conexión e inténtalo de nuevo; si el texto es muy largo, prueba con uno más corto."
+   129→    );
+   130→  }
+   131→  clearTimeout(timer);
+   132→
+   133→  const raw = await res.text().catch(() => "");
+   134→  let data: unknown = null;
+   135→  if (raw) {
+   136→    try {
+   137→      data = JSON.parse(raw);
+   138→    } catch {
+   139→      data = null;
+   140→    }
+   141→  }
+   142→
+   143→  if (data === null || typeof data !== "object") {
+   144→    throw new Error(
+   145→      res.ok
+   146→        ? "El servidor devolvió una respuesta no válida. Inténtalo de nuevo."
+   147→        : `El servidor no ha podido procesar la petición (código ${res.status}). Si el texto es muy largo, prueba con uno más corto o desactiva «Reescritura con IA».`
+   148→    );
+   149→  }
+   150→  if (!res.ok) {
+   151→    const msg = (data as { error?: string }).error;
+   152→    throw new Error(msg || `Error del servidor (código ${res.status}).`);
+   153→  }
+   154→  return data as T;
+   155→}
+   156→
+   157→function IndicatorBar({ label, score, detail }: { label: string; score: number; detail: string }) {
+   158→  return (
+   159→    <div className="space-y-1.5">
+   160→      <div className="flex items-center justify-between gap-3">
+   161→        <span className="text-sm font-medium">{label}</span>
+   162→        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold text-white ${scoreBg(score)}`}>
+   163→          {score}%
+   164→        </span>
+   165→      </div>
+   166→      <div className="h-2 overflow-hidden rounded-full bg-muted">
+   167→        <div
+   168→          className={`h-full rounded-full transition-all duration-700 ${scoreBg(score)}`}
+   169→          style={{ width: `${score}%` }}
+   170→        />
+   171→      </div>
+   172→      <p className="text-xs leading-relaxed text-muted-foreground">{detail}</p>
+   173→    </div>
+   174→  );
+   175→}
+   176→
+   177→// ---------- página ----------
+   178→
+   179→type InputMode = "file" | "paste" | "batch";
+   180→
+   181→interface BatchItem {
+   182→  file: File | null; // null = texto pegado manualmente (no es un archivo)
+   183→  label: string; // nombre visible y base del nombre de archivo exportado
+   184→  status: "pendiente" | "extrayendo" | "listo" | "error";
+   185→  detail: string; // mensaje de estado o error
+   186→  text: string;
+   187→  result?: BatchFileResult;
+   188→}
+   189→
+   190→export default function Home() {
+   191→  const [inputMode, setInputMode] = useState<InputMode>("file");
+   192→  const [fileMeta, setFileMeta] = useState<ExtractMeta | null>(null);
+   193→  const [originalText, setOriginalText] = useState("");
+   194→  const [pasteText, setPasteText] = useState("");
+   195→
+   196→  const [extracting, setExtracting] = useState(false);
+   197→  const [detecting, setDetecting] = useState(false);
+   198→  const [humanizing, setHumanizing] = useState(false);
+   199→  const [hProgress, setHProgress] = useState<{ done: number; total: number } | null>(null);
+   200→  const [reanalyzing, setReanalyzing] = useState(false);
+   201→  const [exporting, setExporting] = useState<string | null>(null);
+   202→
+   203→  const [detection, setDetection] = useState<DetectResult | null>(null);
+   204→  const [humanized, setHumanized] = useState<HumanizeResponse | null>(null);
+   205→  const [humanizedText, setHumanizedText] = useState("");
+   206→  const [afterDetect, setAfterDetect] = useState<DetectResult | null>(null);
+   207→
+   208→  const [intensity, setIntensity] = useState<Intensity>("medium");
+   209→  const [tone, setTone] = useState<Tone>("neutral");
+   210→  const [useLLM, setUseLLM] = useState(true);
+   211→  const [useRules, setUseRules] = useState(true);
+   212→  const [semantic, setSemantic] = useState(true);
+   213→
+   214→  const [error, setError] = useState<string | null>(null);
+   215→  const [copied, setCopied] = useState(false);
+   216→  const [dragging, setDragging] = useState(false);
+   217→
+   218→  const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
+   219→  const [batchStatus, setBatchStatus] = useState<string | null>(null);
+   220→  const [batchRunning, setBatchRunning] = useState(false);
+   221→  const [batchPasteText, setBatchPasteText] = useState("");
+   222→  const [batchPasteLabel, setBatchPasteLabel] = useState("");
+   223→  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+   224→  const [editLabel, setEditLabel] = useState("");
+   225→  const [editText, setEditText] = useState("");
+   226→
+   227→  const analysisRef = useRef<HTMLDivElement>(null);
+   228→  const resultRef = useRef<HTMLDivElement>(null);
+   229→  const fileInputRef = useRef<HTMLInputElement>(null);
+   230→  const batchInputRef = useRef<HTMLInputElement>(null);
+   231→
+   232→  const workingText = inputMode === "file" ? originalText : pasteText;
+   233→  const canAnalyze = workingText.trim().length >= 40 && !detecting;
+   234→
+   235→  const scrollTo = (ref: React.RefObject<HTMLDivElement | null>) =>
+   236→    setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+   237→
+   238→  // ---------- acciones ----------
+   239→
+   240→  const handleFile = useCallback(async (file: File) => {
+   241→    setError(null);
+   242→    setExtracting(true);
+   243→    setDetection(null);
+   244→    setHumanized(null);
+   245→    setAfterDetect(null);
+   246→    try {
+   247→      const fd = new FormData();
+   248→      fd.append("file", file);
+   249→      const data = await fetchJson<{ text: string; meta: ExtractMeta }>(
+   250→        "/api/extract",
+   251→        { method: "POST", body: fd },
+   252→        90_000
+   253→      );
+   254→      setOriginalText(data.text);
+   255→      setFileMeta(data.meta);
+   256→      scrollTo(analysisRef);
+   257→    } catch (e) {
+   258→      setError(e instanceof Error ? e.message : "Error al procesar el archivo.");
+   259→      setFileMeta(null);
+   260→    } finally {
+   261→      setExtracting(false);
+   262→    }
+   263→  }, []);
+   264→
+   265→  const onDrop = (e: React.DragEvent) => {
+   266→    e.preventDefault();
+   267→    setDragging(false);
+   268→    const file = e.dataTransfer.files?.[0];
+   269→    if (file) void handleFile(file);
+   270→  };
+   271→
+   272→  const analyze = async () => {
+   273→    setError(null);
+   274→    setDetecting(true);
+   275→    setHumanized(null);
+   276→    setAfterDetect(null);
+   277→    try {
+   278→      const data = await fetchJson<DetectResult>("/api/detect", {
+   279→        method: "POST",
+   280→        headers: { "Content-Type": "application/json" },
+   281→        body: JSON.stringify({ text: workingText.slice(0, 200000), useAI: semantic }),
+   282→      });
+   283→      setDetection(data);
+   284→      scrollTo(analysisRef);
+   285→    } catch (e) {
+   286→      setError(e instanceof Error ? e.message : "Error al analizar el texto.");
+   287→    } finally {
+   288→      setDetecting(false);
+   289→    }
+   290→  };
+   291→
+   292→  const humanize = async () => {
+   293→    setError(null);
+   294→    setHumanizing(true);
+   295→    setHProgress(null);
+   296→    try {
+   297→      // 1) iniciar el trabajo: el servidor responde al instante con un id.
+   298→      //    La reescritura ocurre en segundo plano; así ninguna petición HTTP
+   299→      //    larga atraviesa el proxy intermedio (que las corta con un 502).
+   300→      const { id } = await fetchJson<{ id: string; status: string }>(
+   301→        "/api/humanize",
+   302→        {
+   303→          method: "POST",
+   304→          headers: { "Content-Type": "application/json" },
+   305→          body: JSON.stringify({
+   306→            text: workingText.slice(0, 200000),
+   307→            intensity,
+   308→            tone,
+   309→            useLLM,
+   310→            useRules,
+   311→          }),
+   312→        },
+   313→        30_000
+   314→      );
+   315→
+   316→      // 2) sondear el estado cada 2 s hasta que termine
+   317→      const started = Date.now();
+   318→      let fallos = 0;
+   319→      while (Date.now() - started < 420_000) {
+   320→        await new Promise((r) => setTimeout(r, 2000));
+   321→        let st: HumanizeJobState;
+   322→        try {
+   323→          st = await fetchJson<HumanizeJobState>(`/api/humanize?id=${encodeURIComponent(id)}`, {}, 20_000);
+   324→          fallos = 0;
+   325→        } catch {
+   326→          // un fallo puntual de red no cancela el trabajo: reintentar
+   327→          fallos++;
+   328→          if (fallos >= 4) {
+   329→            throw new Error(
+   330→              "Se ha perdido la conexión con el servidor mientras se humanizaba el texto. Comprueba tu conexión e inténtalo de nuevo."
+   331→            );
+   332→          }
+   333→          continue;
+   334→        }
+   335→        if (st.status === "processing") {
+   336→          if (st.total > 0) setHProgress({ done: st.progress, total: st.total });
+   337→          continue;
+   338→        }
+   339→        if (st.status === "error") throw new Error(st.error);
+   340→        const data = st.result;
+   341→        setHumanized(data);
+   342→        setHumanizedText(data.text);
+   343→        setAfterDetect(data.after);
+   344→        scrollTo(resultRef);
+   345→        return;
+   346→      }
+   347→      throw new Error(
+   348→        "La reescritura está tardando demasiado. Inténtalo de nuevo; si persiste, prueba con un texto más corto o desactiva «Reescritura con IA»."
+   349→      );
+   350→    } catch (e) {
+   351→      setError(e instanceof Error ? e.message : "Error al humanizar el texto.");
+   352→    } finally {
+   353→      setHumanizing(false);
+   354→      setHProgress(null);
+   355→    }
+   356→  };
+   357→
+   358→  const reanalyze = async () => {
+   359→    setError(null);
+   360→    setReanalyzing(true);
+   361→    try {
+   362→      const data = await fetchJson<DetectResult>("/api/detect", {
+   363→        method: "POST",
+   364→        headers: { "Content-Type": "application/json" },
+   365→        body: JSON.stringify({ text: humanizedText.slice(0, 200000), useAI: semantic }),
+   366→      });
+   367→      setAfterDetect(data);
+   368→    } catch (e) {
+   369→      setError(e instanceof Error ? e.message : "Error al reanalizar.");
+   370→    } finally {
+   371→      setReanalyzing(false);
+   372→    }
+   373→  };
+   374→
+   375→  const download = async (format: "docx" | "pdf" | "txt") => {
+   376→    setError(null);
+   377→    setExporting(format);
+   378→    try {
+   379→      const base = (fileMeta?.fileName || "texto").replace(/\.[A-Za-z0-9]+$/, "") || "texto";
+   380→      const res = await fetch("/api/export", {
+   381→        method: "POST",
+   382→        headers: { "Content-Type": "application/json" },
+   383→        body: JSON.stringify({ text: humanizedText, format, fileName: base }),
+   384→      });
+   385→      if (!res.ok) {
+   386→        const data = await res.json().catch(() => null);
+   387→        throw new Error(data?.error || "No se pudo generar el archivo.");
+   388→      }
+   389→      const blob = await res.blob();
+   390→      const url = URL.createObjectURL(blob);
+   391→      const a = document.createElement("a");
+   392→      a.href = url;
+   393→      a.download = `${base}_humanizado.${format}`;
+   394→      document.body.appendChild(a);
+   395→      a.click();
+   396→      a.remove();
+   397→      URL.revokeObjectURL(url);
+   398→    } catch (e) {
+   399→      setError(e instanceof Error ? e.message : "Error al exportar.");
+   400→    } finally {
+   401→      setExporting(null);
+   402→    }
+   403→  };
+   404→
+   405→  const copyResult = async () => {
+   406→    try {
+   407→      await navigator.clipboard.writeText(humanizedText);
+   408→      setCopied(true);
+   409→      setTimeout(() => setCopied(false), 2000);
+   410→    } catch {
+   411→      setError("No se pudo copiar al portapapeles.");
+   412→    }
+   413→  };
+   414→
+   415→  const resetAll = () => {
+   416→    setOriginalText("");
+   417→    setPasteText("");
+   418→    setFileMeta(null);
+   419→    setDetection(null);
+   420→    setHumanized(null);
+   421→    setHumanizedText("");
+   422→    setAfterDetect(null);
+   423→    setError(null);
+   424→    if (fileInputRef.current) fileInputRef.current.value = "";
+   425→  };
+   426→
+   427→  // ---------- lote ----------
+   428→
+   429→  const addBatchFiles = (list: FileList | File[]) => {
+   430→    const files = Array.from(list).filter((f) => /\.(pdf|doc|docx|txt|md)$/i.test(f.name));
+   431→    if (!files.length) {
+   432→      setError("Formato no admitido en el lote: usa PDF, DOC, DOCX o TXT.");
+   433→      return;
+   434→    }
+   435→    setError(null);
+   436→    setBatchItems((prev) => {
+   437→      const merged = [...prev];
+   438→      for (const f of files) {
+   439→        if (merged.length >= 12) break;
+   440→        if (merged.some((m) => m.file?.name === f.name && m.file?.size === f.size)) continue;
+   441→        merged.push({ file: f, label: f.name, status: "pendiente", detail: "En espera", text: "" });
+   442→      }
+   443→      return merged;
+   444→    });
+   445→  };
+   446→
+   447→  const removeBatchItem = (idx: number) => {
+   448→    setBatchItems((prev) => prev.filter((_, j) => j !== idx));
+   449→  };
+   450→
+   451→  // Añadir un texto pegado al lote, con un nombre único y seguro como nombre de archivo
+   452→  const addBatchPaste = () => {
+   453→    const t = batchPasteText.trim();
+   454→    if (t.length < 40) {
+   455→      setError("El texto pegado es demasiado corto (mínimo ~40 caracteres).");
+   456→      return;
+   457→    }
+   458→    if (batchItems.length >= 12) {
+   459→      setError("Máximo 12 elementos por lote.");
+   460→      return;
+   461→    }
+   462→    const raw = batchPasteLabel
+   463→      .trim()
+   464→      .replace(/[\\/:*?"<>|]+/g, " ")
+   465→      .replace(/\s+/g, " ")
+   466→      .trim()
+   467→      .slice(0, 60);
+   468→    const taken = new Set(batchItems.map((b) => b.label.toLowerCase()));
+   469→    let label: string;
+   470→    if (raw) {
+   471→      label = raw;
+   472→      let k = 2;
+   473→      while (taken.has(label.toLowerCase())) {
+   474→        label = `${raw} (${k})`;
+   475→        k++;
+   476→      }
+   477→    } else {
+   478→      let k = 1;
+   479→      do {
+   480→        label = `Texto ${batchItems.length + k}`;
+   481→        k++;
+   482→      } while (taken.has(label.toLowerCase()));
+   483→    }
+   484→    setError(null);
+   485→    setBatchItems((prev) => [...prev, { file: null, label, status: "pendiente", detail: "En espera", text: t }]);
+   486→    setBatchPasteText("");
+   487→    setBatchPasteLabel("");
+   488→  };
+   489→
+   490→  // ---------- edición de un texto pegado ya añadido ----------
+   491→
+   492→  const startEditItem = (idx: number) => {
+   493→    const it = batchItems[idx];
+   494→    if (!it || it.file || batchRunning) return;
+   495→    setError(null);
+   496→    setEditingIdx(idx);
+   497→    setEditLabel(it.label);
+   498→    setEditText(it.text);
+   499→  };
+   500→
+   501→  const cancelEditItem = () => {
+   502→    setEditingIdx(null);
+   503→    setEditLabel("");
+   504→    setEditText("");
+   505→  };
+   506→
+   507→  const saveEditItem = () => {
+   508→    if (editingIdx === null) return;
+   509→    const t = editText.trim();
+   510→    if (t.length < 40) {
+   511→      setError("El texto editado es demasiado corto (mínimo ~40 caracteres).");
+   512→      return;
+   513→    }
+   514→    const current = batchItems[editingIdx];
+   515→    if (!current) return;
+   516→    const raw = editLabel
+   517→      .trim()
+   518→      .replace(/[\\/:*?"<>|]+/g, " ")
+   519→      .replace(/\s+/g, " ")
+   520→      .trim()
+   521→      .slice(0, 60);
+   522→    const base = raw || current.label;
+   523→    const taken = new Set(
+   524→      batchItems.map((b, j) => (j === editingIdx ? "" : b.label.toLowerCase())).filter(Boolean)
+   525→    );
+   526→    let label = base;
+   527→    let k = 2;
+   528→    while (taken.has(label.toLowerCase())) {
+   529→      label = `${base} (${k})`;
+   530→      k++;
+   531→    }
+   532→    setBatchItems((prev) =>
+   533→      prev.map((b, j) =>
+   534→        j === editingIdx
+   535→          ? { ...b, label, text: t, status: "pendiente" as const, detail: "Editado, sin procesar", result: undefined }
+   536→          : b
+   537→      )
+   538→    );
+   539→    cancelEditItem();
+   540→  };
+   541→
+   542→  const applyBatchResults = (results: BatchFileResult[]) => {
+   543→    setBatchItems((prev) =>
+   544→      prev.map((b) => {
+   545→        const r = results.find((x) => x.name === b.label);
+   546→        return r ? { ...b, status: "listo" as const, detail: "Humanizado", result: r } : b;
+   547→      })
+   548→    );
+   549→  };
+   550→
+   551→  const processBatch = async () => {
+   552→    if (batchItems.length === 0 || batchRunning) return;
+   553→    setError(null);
+   554→    setBatchRunning(true);
+   555→    try {
+   556→      // 1) extraer el texto de cada archivo (los que ya tienen texto se saltan)
+   557→      const texts: { name: string; text: string }[] = [];
+   558→      let fallas = 0;
+   559→      for (let i = 0; i < batchItems.length; i++) {
+   560→        const it = batchItems[i];
+   561→        if (it.text.trim().length >= 40) {
+   562→          texts.push({ name: it.label, text: it.text });
+   563→          continue;
+   564→        }
+   565→        if (!it.file) {
+   566→          // texto pegado demasiado corto (no debería ocurrir, pero por seguridad)
+   567→          fallas++;
+   568→          setBatchItems((prev) =>
+   569→            prev.map((b, j) =>
+   570→              j === i ? { ...b, status: "error", detail: "Texto demasiado corto (mínimo ~40 caracteres)." } : b
+   571→            )
+   572→          );
+   573→          continue;
+   574→        }
+   575→        setBatchItems((prev) =>
+   576→          prev.map((b, j) => (j === i ? { ...b, status: "extrayendo", detail: "Extrayendo texto…" } : b))
+   577→        );
+   578→        setBatchStatus(`Extrayendo texto (${i + 1} de ${batchItems.length}): ${it.label}`);
+   579→        try {
+   580→          const fd = new FormData();
+   581→          fd.append("file", it.file);
+   582→          const data = await fetchJson<{ text: string }>("/api/extract", { method: "POST", body: fd }, 90_000);
+   583→          texts.push({ name: it.label, text: data.text });
+   584→          setBatchItems((prev) =>
+   585→            prev.map((b, j) => (j === i ? { ...b, status: "listo", detail: "Texto extraído", text: data.text } : b))
+   586→          );
+   587→        } catch (e) {
+   588→          fallas++;
+   589→          setBatchItems((prev) =>
+   590→            prev.map((b, j) =>
+   591→              j === i
+   592→                ? { ...b, status: "error", detail: e instanceof Error ? e.message : "No se pudo extraer el texto." }
+   593→                : b
+   594→            )
+   595→          );
+   596→        }
+   597→      }
+   598→      if (texts.length === 0) {
+   599→        throw new Error("Ninguno de los archivos tiene texto utilizable (mínimo ~40 caracteres).");
+   600→      }
+   601→
+   602→      // 2) lanzar el trabajo por lotes en el servidor (responde al instante)
+   603→      setBatchStatus(`Iniciando la reescritura de ${texts.length} elemento(s)…`);
+   604→      const { id } = await fetchJson<{ id: string }>(
+   605→        "/api/humanize-batch",
+   606→        {
+   607→          method: "POST",
+   608→          headers: { "Content-Type": "application/json" },
+   609→          body: JSON.stringify({ files: texts, intensity, tone, useLLM, useRules }),
+   610→        },
+   611→        30_000
+   612→      );
+   613→
+   614→      // 3) sondear el estado cada 3 s (máx. 1 h)
+   615→      const started = Date.now();
+   616→      let fallos = 0;
+   617→      while (Date.now() - started < 3_600_000) {
+   618→        await new Promise((r) => setTimeout(r, 3000));
+   619→        let st: HumanizeBatchJobState;
+   620→        try {
+   621→          st = await fetchJson<HumanizeBatchJobState>(
+   622→            `/api/humanize-batch?id=${encodeURIComponent(id)}`,
+   623→            {},
+   624→            20_000
+   625→          );
+   626→          fallos = 0;
+   627→        } catch {
+   628→          fallos++;
+   629→          if (fallos >= 4) {
+   630→            throw new Error("Se ha perdido la conexión con el servidor durante el lote. Inténtalo de nuevo.");
+   631→          }
+   632→          continue;
+   633→        }
+   634→        if (st.status === "processing") {
+   635→          setBatchStatus(
+   636→            `Archivo ${Math.min(st.filesDone + 1, st.filesTotal)} de ${st.filesTotal}: ${st.currentFile}` +
+   637→              (st.fileTotal > 0 ? ` · fragmento ${st.fileProgress}/${st.fileTotal}` : "")
+   638→          );
+   639→          continue;
+   640→        }
+   641→        if (st.status === "error") {
+   642→          if (st.results?.length) applyBatchResults(st.results);
+   643→          throw new Error(st.error);
+   644→        }
+   645→        applyBatchResults(st.results);
+   646→        setBatchStatus(`Lote completado: ${st.results.length} elemento(s) humanizados.`);
+   647→        if (fallas > 0) {
+   648→          setError(`${fallas} elemento(s) no pudieron procesarse y se han omitido.`);
+   649→        }
+   650→        return;
+   651→      }
+   652→      throw new Error("El lote está tardando demasiado. Reinténtalo con menos archivos.");
+   653→    } catch (e) {
+   654→      setError(e instanceof Error ? e.message : "Error al procesar el lote.");
+   655→      setBatchStatus(null);
+   656→    } finally {
+   657→      setBatchRunning(false);
+   658→    }
+   659→  };
+   660→
+   661→  const downloadBlob = (blob: Blob, name: string) => {
+   662→    const url = URL.createObjectURL(blob);
+   663→    const a = document.createElement("a");
+   664→    a.href = url;
+   665→    a.download = name;
+   666→    document.body.appendChild(a);
+   667→    a.click();
+   668→    a.remove();
+   669→    URL.revokeObjectURL(url);
+   670→  };
+   671→
+   672→  const downloadBatchFile = async (item: BatchItem, format: "docx" | "pdf" | "txt") => {
+   673→    if (!item.result) return;
+   674→    setError(null);
+   675→    setExporting(`batch:${item.label}:${format}`);
+   676→    try {
+   677→      const base = item.label.replace(/\.[A-Za-z0-9]+$/, "") || "texto";
+   678→      const res = await fetch("/api/export", {
+   679→        method: "POST",
+   680→        headers: { "Content-Type": "application/json" },
+   681→        body: JSON.stringify({ text: item.result.text, format, fileName: base }),
+   682→      });
+   683→      if (!res.ok) {
+   684→        const d = await res.json().catch(() => null);
+   685→        throw new Error(d?.error || "No se pudo generar el archivo.");
+   686→      }
+   687→      downloadBlob(await res.blob(), `${base}_humanizado.${format}`);
+   688→    } catch (e) {
+   689→      setError(e instanceof Error ? e.message : "Error al exportar.");
+   690→    } finally {
+   691→      setExporting(null);
+   692→    }
+   693→  };
+   694→
+   695→  const downloadBatchZip = async (format: "docx" | "pdf" | "txt") => {
+   696→    const ready = batchItems.filter((b) => b.result);
+   697→    if (!ready.length) return;
+   698→    setError(null);
+   699→    setExporting("zip");
+   700→    try {
+   701→      const res = await fetch("/api/export-batch", {
+   702→        method: "POST",
+   703→        headers: { "Content-Type": "application/json" },
+   704→        body: JSON.stringify({
+   705→          files: ready.map((b) => ({ name: b.label, text: b.result!.text, format })),
+   706→        }),
+   707→      });
+   708→      if (!res.ok) {
+   709→        const d = await res.json().catch(() => null);
+   710→        throw new Error(d?.error || "No se pudo generar el ZIP.");
+   711→      }
+   712→      downloadBlob(await res.blob(), `vozhumana-lote-${format}.zip`);
+   713→    } catch (e) {
+   714→      setError(e instanceof Error ? e.message : "Error al exportar el ZIP.");
+   715→    } finally {
+   716→      setExporting(null);
+   717→    }
+   718→  };
+   719→
+   720→  // Informe comparativo del lote (DOCX/PDF): resumen antes/después + extractos
+   721→  const downloadReport = async (format: "docx" | "pdf") => {
+   722→    const ready = batchItems.filter((b) => b.result);
+   723→    if (!ready.length) return;
+   724→    setError(null);
+   725→    setExporting(`report:${format}`);
+   726→    try {
+   727→      const optionsLine = [
+   728→        `intensidad ${intensity === "light" ? "ligera" : intensity === "medium" ? "media" : "profunda"}`,
+   729→        `tono ${tone === "neutral" ? "neutro" : tone === "academico" ? "académico" : tone === "tecnico" ? "técnico" : tone === "juridico" ? "jurídico" : tone}`,
+   730→        useLLM ? "reescritura con IA activada" : "reescritura con IA desactivada",
+   731→        useRules ? "limpieza de frases hechas activada" : "limpieza de frases hechas desactivada",
+   732→      ].join(" · ");
+   733→      const res = await fetch("/api/export-report", {
+   734→        method: "POST",
+   735→        headers: { "Content-Type": "application/json" },
+   736→        body: JSON.stringify({
+   737→          format,
+   738→          options: optionsLine,
+   739→          items: ready.map((b) => ({
+   740→            name: b.label,
+   741→            lang: b.result!.lang,
+   742→            beforeScore: b.result!.before.score,
+   743→            beforeLevel: b.result!.before.level,
+   744→            afterScore: b.result!.after.score,
+   745→            afterLevel: b.result!.after.level,
+   746→            mode: b.result!.mode,
+   747→            changes: b.result!.changes,
+   748→            warnings: b.result!.warnings,
+   749→            originalExcerpt: b.text.slice(0, 900),
+   750→            humanizedExcerpt: b.result!.text.slice(0, 900),
+   751→          })),
+   752→        }),
+   753→      });
+   754→      if (!res.ok) {
+   755→        const d = await res.json().catch(() => null);
+   756→        throw new Error(d?.error || "No se pudo generar el informe.");
+   757→      }
+   758→      downloadBlob(await res.blob(), `vozhumana-informe.${format}`);
+   759→    } catch (e) {
+   760→      setError(e instanceof Error ? e.message : "Error al generar el informe.");
+   761→    } finally {
+   762→      setExporting(null);
+   763→    }
+   764→  };
+   765→
+   766→  // ---------- render ----------
+   767→
+   768→  // Opciones de reescritura: un solo bloque compartido por el modo individual y el lote
+   769→  const opcionesReescritura = (
+   770→    <>
+   771→      <div>
+   772→        <p className="mb-2 text-sm font-medium">Intensidad de la reescritura</p>
+   773→        <div className="grid gap-2 sm:grid-cols-3">
+   774→          {(
+   775→            [
+   776→              { v: "light", t: "Ligera", d: "Pule el ritmo y quita frases hechas. Conserva casi todo el original." },
+   777→              { v: "medium", t: "Media", d: "Reescribe cada frase con otras palabras manteniendo el sentido." },
+   778→              { v: "deep", t: "Profunda", d: "Reescritura libre: reordena, fusiona y divide frases. Máxima naturalidad." },
+   779→            ] as const
+   780→          ).map((o) => (
+   781→            <button
+   782→              key={o.v}
+   783→              type="button"
+   784→              onClick={() => setIntensity(o.v)}
+   785→              className={`rounded-xl border p-3 text-left transition-all ${
+   786→                intensity === o.v
+   787→                  ? "border-primary bg-accent ring-1 ring-primary"
+   788→                  : "hover:border-primary/40 hover:bg-muted/50"
+   789→              }`}
+   790→              aria-pressed={intensity === o.v}
+   791→            >
+   792→              <span className="block text-sm font-semibold">{o.t}</span>
+   793→              <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{o.d}</span>
+   794→            </button>
+   795→          ))}
+   796→        </div>
+   797→      </div>
+   798→
+   799→      <div className="grid gap-4 sm:grid-cols-2">
+   800→        <div>
+   801→          <p className="mb-2 text-sm font-medium">Tono del texto final</p>
+   802→          <Select value={tone} onValueChange={(v) => setTone(v as Tone)}>
+   803→            <SelectTrigger aria-label="Tono">
+   804→              <SelectValue />
+   805→            </SelectTrigger>
+   806→            <SelectContent>
+   807→              <SelectItem value="neutral">Neutro y claro</SelectItem>
+   808→              <SelectItem value="profesional">Profesional</SelectItem>
+   809→              <SelectItem value="academico">Académico</SelectItem>
+   810→              <SelectItem value="cercano">Cercano y conversacional</SelectItem>
+   811→              <SelectItem value="divulgativo">Divulgativo</SelectItem>
+   812→              <SelectItem value="marketing">Marketing y comercial</SelectItem>
+   813→              <SelectItem value="tecnico">Técnico</SelectItem>
+   814→              <SelectItem value="juridico">Jurídico y formal</SelectItem>
+   815→            </SelectContent>
+   816→          </Select>
+   817→        </div>
+   818→        <div className="space-y-3">
+   819→          <div className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
+   820→            <div>
+   821→              <p className="text-sm font-medium">Reescritura con IA</p>
+   822→              <p className="text-xs text-muted-foreground">Reescribe el texto con un modelo lingüístico.</p>
+   823→            </div>
+   824→            <Switch checked={useLLM} onCheckedChange={setUseLLM} aria-label="Reescritura con IA" />
+   825→          </div>
+   826→          <div className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
+   827→            <div>
+   828→              <p className="text-sm font-medium">Limpieza de frases hechas</p>
+   829→              <p className="text-xs text-muted-foreground">Sustituye muletillas típicas de IA por alternativas naturales.</p>
+   830→            </div>
+   831→            <Switch checked={useRules} onCheckedChange={setUseRules} aria-label="Limpieza de frases hechas" />
+   832→          </div>
+   833→        </div>
+   834→      </div>
+   835→    </>
+   836→  );
+   837→
+   838→  return (
+   839→    <div className="flex min-h-screen flex-col">
+   840→      {/* Cabecera */}
+   841→      <header className="sticky top-0 z-40 border-b bg-card/85 backdrop-blur">
+   842→        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4 sm:px-6">
+   843→          <div className="flex items-center gap-2.5">
+   844→            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+   845→              <PenLine className="h-5 w-5" />
+   846→            </div>
+   847→            <div>
+   848→              <div className="text-base font-bold leading-tight">VozHumana</div>
+   849→              <div className="text-[11px] text-muted-foreground leading-tight">
+   850→                Humanizador y detector de texto IA
+   851→              </div>
+   852→            </div>
+   853→          </div>
+   854→          <Badge variant="outline" className="gap-1.5 border-emerald-300 bg-emerald-50 text-emerald-800">
+   855→            <ShieldCheck className="h-3.5 w-3.5" />
+   856→            Metadatos limpios
+   857→          </Badge>
+   858→        </div>
+   859→      </header>
+   860→
+   861→      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
+   862→        {/* Hero */}
+   863→        <section className="mb-8 text-center">
+   864→          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+   865→            Humaniza texto generado por IA
+   866→          </h1>
+   867→          <p className="mx-auto mt-3 max-w-2xl text-muted-foreground">
+   868→            Sube un archivo <strong>PDF, DOC o DOCX</strong>, comprueba si parece escrito por una
+   869→            inteligencia artificial y reescríbelo con estilo humano natural. Después descárgalo en
+   870→            el formato que necesites.
+   871→          </p>
+   872→          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+   873→            <Badge variant="secondary">Heurísticas de estilo + análisis semántico con IA</Badge>
+   874→            <Badge variant="secondary">Reescritura con IA + reglas</Badge>
+   875→            <Badge variant="secondary">PDF · DOC · DOCX · TXT</Badge>
+   876→            <Badge variant="secondary">ES · EN · FR · IT · PT · DE</Badge>
+   877→          </div>
+   878→        </section>
+   879→
+   880→        {error && (
+   881→          <div className="mb-6 flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+   882→            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+   883→            <span>{error}</span>
+   884→            <button onClick={() => setError(null)} className="ml-auto shrink-0 text-red-600 hover:text-red-800" aria-label="Cerrar aviso">
+   885→              <X className="h-4 w-4" />
+   886→            </button>
+   887→          </div>
+   888→        )}
+   889→
+   890→        {/* Paso 1: entrada */}
+   891→        <Card className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+   892→          <CardHeader>
+   893→            <CardTitle className="flex items-center gap-2 text-xl">
+   894→              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">1</span>
+   895→              Añade tu texto
+   896→            </CardTitle>
+   897→            <CardDescription>
+   898→              Sube un documento o pega el texto directamente. El texto nunca se almacena: solo se procesa en memoria.
+   899→            </CardDescription>
+   900→          </CardHeader>
+   901→          <CardContent>
+   902→            <Tabs value={inputMode} onValueChange={(v) => setInputMode(v as InputMode)}>
+   903→              <TabsList className="mb-4">
+   904→                <TabsTrigger value="file" className="gap-1.5">
+   905→                  <FileUp className="h-4 w-4" /> Subir archivo
+   906→                </TabsTrigger>
+   907→                <TabsTrigger value="paste" className="gap-1.5">
+   908→                  <ClipboardPaste className="h-4 w-4" /> Pegar texto
+   909→                </TabsTrigger>
+   910→                <TabsTrigger value="batch" className="gap-1.5">
+   911→                  <Layers className="h-4 w-4" /> En lote
+   912→                </TabsTrigger>
+   913→              </TabsList>
+   914→
+   915→              <TabsContent value="file">
+   916→                <input
+   917→                  ref={fileInputRef}
+   918→                  type="file"
+   919→                  accept=".pdf,.doc,.docx,.txt,.md"
+   920→                  className="hidden"
+   921→                  onChange={(e) => {
+   922→                    const f = e.target.files?.[0];
+   923→                    if (f) void handleFile(f);
+   924→                  }}
+   925→                />
+   926→                {!fileMeta ? (
+   927→                  <button
+   928→                    type="button"
+   929→                    onClick={() => fileInputRef.current?.click()}
+   930→                    onDragOver={(e) => {
+   931→                      e.preventDefault();
+   932→                      setDragging(true);
+   933→                    }}
+   934→                    onDragLeave={() => setDragging(false)}
+   935→                    onDrop={onDrop}
+   936→                    className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-12 text-center transition-colors ${
+   937→                      dragging ? "border-primary bg-accent" : "border-border hover:border-primary/50 hover:bg-muted/50"
+   938→                    }`}
+   939→                  >
+   940→                    {extracting ? (
+   941→                      <Loader2 className="h-10 w-10 animate-spin text-primary" />
+   942→                    ) : (
+   943→                      <FileUp className="h-10 w-10 text-primary" />
+   944→                    )}
+   945→                    <div>
+   946→                      <p className="font-medium">
+   947→                        {extracting ? "Extrayendo texto…" : "Arrastra un archivo aquí o haz clic para elegirlo"}
+   948→                      </p>
+   949→                      <p className="mt-1 text-sm text-muted-foreground">
+   950→                        PDF, DOC, DOCX o TXT · máximo 25 MB
+   951→                      </p>
+   952→                    </div>
+   953→                  </button>
+   954→                ) : (
+   955→                  <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-muted/40 px-4 py-3">
+   956→                    <FileText className="h-8 w-8 shrink-0 text-primary" />
+   957→                    <div className="min-w-0 flex-1">
+   958→                      <p className="truncate text-sm font-medium">{fileMeta.fileName}</p>
+   959→                      <p className="text-xs text-muted-foreground">
+   960→                        {fileMeta.kind.toUpperCase()} · {fileMeta.words.toLocaleString("es-ES")} palabras ·{" "}
+   961→                        {fileMeta.chars.toLocaleString("es-ES")} caracteres
+   962→                      </p>
+   963→                    </div>
+   964→                    <Button variant="outline" size="sm" onClick={resetAll} className="gap-1.5">
+   965→                      <Trash2 className="h-3.5 w-3.5" /> Quitar
+   966→                    </Button>
+   967→                  </div>
+   968→                )}
+   969→                {fileMeta && (
+   970→                  <Textarea
+   971→                    className="mt-4 min-h-40 max-h-72 overflow-y-auto font-mono text-sm"
+   972→                    value={originalText}
+   973→                    onChange={(e) => {
+   974→                      setOriginalText(e.target.value);
+   975→                      setDetection(null);
+   976→                      setHumanized(null);
+   977→                    }}
+   978→                    aria-label="Texto extraído del documento"
+   979→                  />
+   980→                )}
+   981→              </TabsContent>
+   982→
+   983→              <TabsContent value="paste">
+   984→                <Textarea
+   985→                  className="min-h-52"
+   986→                  placeholder="Pega aquí el texto que quieres analizar y humanizar…"
+   987→                  value={pasteText}
+   988→                  onChange={(e) => {
+   989→                    setPasteText(e.target.value);
+   990→                    setDetection(null);
+   991→                    setHumanized(null);
+   992→                  }}
+   993→                  aria-label="Texto pegado"
+   994→                />
+   995→                <p className="mt-2 text-xs text-muted-foreground">
+   996→                  {pasteText.trim() ? `${pasteText.trim().split(/\s+/).length.toLocaleString("es-ES")} palabras` : "Espera un resultado mejor con 100 palabras o más."}
+   997→                </p>
+   998→              </TabsContent>
+   999→
+  1000→              <TabsContent value="batch">
+  1001→                <input
+  1002→                  ref={batchInputRef}
+  1003→                  type="file"
+  1004→                  multiple
+  1005→                  accept=".pdf,.doc,.docx,.txt,.md"
+  1006→                  className="hidden"
+  1007→                  onChange={(e) => {
+  1008→                    if (e.target.files?.length) addBatchFiles(e.target.files);
+  1009→                    if (batchInputRef.current) batchInputRef.current.value = "";
+  1010→                  }}
+  1011→                />
+  1012→                <button
+  1013→                  type="button"
+  1014→                  onClick={() => batchInputRef.current?.click()}
+  1015→                  onDragOver={(e) => {
+  1016→                    e.preventDefault();
+  1017→                    setDragging(true);
+  1018→                  }}
+  1019→                  onDragLeave={() => setDragging(false)}
+  1020→                  onDrop={(e) => {
+  1021→                    e.preventDefault();
+  1022→                    setDragging(false);
+  1023→                    if (e.dataTransfer.files?.length) addBatchFiles(e.dataTransfer.files);
+  1024→                  }}
+  1025→                  disabled={batchRunning}
+  1026→                  className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors disabled:opacity-60 ${
+  1027→                    dragging ? "border-primary bg-accent" : "border-border hover:border-primary/50 hover:bg-muted/50"
+  1028→                  }`}
+  1029→                >
+  1030→                  <Layers className="h-10 w-10 text-primary" />
+  1031→                  <div>
+  1032→                    <p className="font-medium">Arrastra varios archivos o haz clic para elegirlos</p>
+  1033→                    <p className="mt-1 text-sm text-muted-foreground">
+  1034→                      PDF, DOC, DOCX o TXT · hasta 12 elementos (archivos o textos pegados) · se procesan uno a uno
+  1035→                    </p>
+  1036→                  </div>
+  1037→                </button>
+  1038→
+  1039→                {/* Añadir un texto pegado al lote */}
+  1040→                <div className="mt-4 rounded-xl border bg-muted/20 p-4">
+  1041→                  <p className="flex items-center gap-2 text-sm font-medium">
+  1042→                    <ClipboardPaste className="h-4 w-4 text-primary" />
+  1043→                    …o pega un texto y añádelo al lote
+  1044→                  </p>
+  1045→                  <Input
+  1046→                    className="mt-3"
+  1047→                    placeholder="Nombre del texto (opcional): p. ej. «Capítulo 3»"
+  1048→                    value={batchPasteLabel}
+  1049→                    maxLength={80}
+  1050→                    onChange={(e) => setBatchPasteLabel(e.target.value)}
+  1051→                    disabled={batchRunning}
+  1052→                    aria-label="Nombre del texto pegado"
+  1053→                  />
+  1054→                  <Textarea
+  1055→                    className="mt-2 min-h-28"
+  1056→                    placeholder="Pega aquí el texto… (mínimo ~40 caracteres)"
+  1057→                    value={batchPasteText}
+  1058→                    onChange={(e) => setBatchPasteText(e.target.value)}
+  1059→                    disabled={batchRunning}
+  1060→                    aria-label="Texto para añadir al lote"
+  1061→                  />
+  1062→                  <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
+  1063→                    <span className="text-xs text-muted-foreground">
+  1064→                      {batchPasteText.trim()
+  1065→                        ? `${batchPasteText.trim().split(/\s+/).length.toLocaleString("es-ES")} palabras`
+  1066→                        : "Cada texto se procesa junto a los archivos con las mismas opciones."}
+  1067→                    </span>
+  1068→                    <Button
+  1069→                      variant="outline"
+  1070→                      size="sm"
+  1071→                      onClick={addBatchPaste}
+  1072→                      disabled={batchRunning || batchPasteText.trim().length < 40 || batchItems.length >= 12}
+  1073→                      className="gap-1.5"
+  1074→                    >
+  1075→                      <Layers className="h-3.5 w-3.5" />
+  1076→                      Añadir al lote ({batchItems.length}/12)
+  1077→                    </Button>
+  1078→                  </div>
+  1079→                </div>
+  1080→
+  1081→                {/* Opciones de reescritura del lote */}
+  1082→                <div className="mt-4 rounded-xl border p-4">
+  1083→                  <p className="flex items-center gap-2 text-sm font-semibold">
+  1084→                    <Sparkles className="h-4 w-4 text-primary" />
+  1085→                    Opciones de reescritura
+  1086→                  </p>
+  1087→                  <p className="mb-4 mt-0.5 text-xs text-muted-foreground">
+  1088→                    Se aplican a todos los elementos del lote.
+  1089→                  </p>
+  1090→                  <div className="space-y-5">
+  1091→                    {opcionesReescritura}
+  1092→                  </div>
+  1093→                </div>
+  1094→
+  1095→                {batchItems.length > 0 && (
+  1096→                  <div className="mt-4 space-y-2">
+  1097→                    {batchItems.map((b, i) => (
+  1098→                      <div key={`${b.label}-${i}`} className="space-y-2">
+  1099→                      <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-muted/30 px-3 py-2.5">
+  1100→                        {b.status === "extrayendo" || (batchRunning && b.status === "pendiente") ? (
+  1101→                          <Loader2 className="h-6 w-6 shrink-0 animate-spin text-primary" />
+  1102→                        ) : b.status === "error" ? (
+  1103→                          <AlertTriangle className="h-6 w-6 shrink-0 text-red-600" />
+  1104→                        ) : b.result ? (
+  1105→                          <Check className="h-6 w-6 shrink-0 text-emerald-600" />
+  1106→                        ) : !b.file ? (
+  1107→                          <ClipboardPaste className="h-6 w-6 shrink-0 text-primary" />
+  1108→                        ) : (
+  1109→                          <FileText className="h-6 w-6 shrink-0 text-muted-foreground" />
+  1110→                        )}
+  1111→                        <div className="min-w-0 flex-1">
+  1112→                          <p className="truncate text-sm font-medium">{b.label}</p>
+  1113→                          <p className="text-xs text-muted-foreground">
+  1114→                            {b.file
+  1115→                              ? `${(b.file.size / 1024).toFixed(0)} KB · ${b.detail}`
+  1116→                              : `${b.text.trim().split(/\s+/).length.toLocaleString("es-ES")} palabras · ${b.detail}`}
+  1117→                          </p>
+  1118→                        </div>
+  1119→                        {b.result && (
+  1120→                          <>
+  1121→                            <Badge variant="outline" className="gap-1">
+  1122→                              antes {b.result.before.score}% → ahora {b.result.after.score}%
+  1123→                            </Badge>
+  1124→                            <span className="text-xs text-muted-foreground">{LANG_LABELS[b.result.lang]}</span>
+  1125→                            <div className="flex gap-1">
+  1126→                              {(["docx", "pdf", "txt"] as const).map((fmt) => (
+  1127→                                <Button
+  1128→                                  key={fmt}
+  1129→                                  variant="outline"
+  1130→                                  size="sm"
+  1131→                                  className="h-7 px-2 text-xs"
+  1132→                                  onClick={() => void downloadBatchFile(b, fmt)}
+  1133→                                  disabled={exporting !== null}
+  1134→                                >
+  1135→                                  {exporting === `batch:${b.label}:${fmt}` ? (
+  1136→                                    <Loader2 className="h-3 w-3 animate-spin" />
+  1137→                                  ) : (
+  1138→                                    <Download className="h-3 w-3" />
+  1139→                                  )}
+  1140→                                  {fmt.toUpperCase()}
+  1141→                                </Button>
+  1142→                              ))}
+  1143→                            </div>
+  1144→                          </>
+  1145→                        )}
+  1146→                        {!b.file && editingIdx !== i && (
+  1147→                          <Button
+  1148→                            variant="ghost"
+  1149→                            size="sm"
+  1150→                            className="h-7 px-2 text-muted-foreground"
+  1151→                            onClick={() => startEditItem(i)}
+  1152→                            disabled={batchRunning}
+  1153→                            aria-label={`Editar ${b.label}`}
+  1154→                          >
+  1155→                            <Pencil className="h-4 w-4" />
+  1156→                          </Button>
+  1157→                        )}
+  1158→                        <Button
+  1159→                          variant="ghost"
+  1160→                          size="sm"
+  1161→                          className="h-7 px-2 text-muted-foreground"
+  1162→                          onClick={() => removeBatchItem(i)}
+  1163→                          disabled={batchRunning}
+  1164→                          aria-label={`Quitar ${b.label}`}
+  1165→                        >
+  1166→                          <X className="h-4 w-4" />
+  1167→                        </Button>
+  1168→                      </div>
+  1169→
+  1170→                      {editingIdx === i && !b.file && (
+  1171→                        <div className="rounded-xl border border-primary/40 bg-accent/30 p-3">
+  1172→                          <p className="mb-2 flex items-center gap-2 text-sm font-medium">
+  1173→                            <Pencil className="h-4 w-4 text-primary" />
+  1174→                            Editar «{batchItems[i]?.label}»
+  1175→                          </p>
+  1176→                          <Input
+  1177→                            value={editLabel}
+  1178→                            maxLength={80}
+  1179→                            onChange={(e) => setEditLabel(e.target.value)}
+  1180→                            placeholder="Nombre del texto"
+  1181→                            disabled={batchRunning}
+  1182→                            aria-label="Nombre del texto en edición"
+  1183→                          />
+  1184→                          <Textarea
+  1185→                            className="mt-2 min-h-32 font-mono text-sm"
+  1186→                            value={editText}
+  1187→                            onChange={(e) => setEditText(e.target.value)}
+  1188→                            disabled={batchRunning}
+  1189→                            aria-label="Texto en edición"
+  1190→                          />
+  1191→                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+  1192→                            <span className="text-xs text-muted-foreground">
+  1193→                              {editText.trim()
+  1194→                                ? `${editText.trim().split(/\s+/).length.toLocaleString("es-ES")} palabras`
+  1195→                                : "Sin cambios aún"}
+  1196→                            </span>
+  1197→                            <div className="flex gap-2">
+  1198→                              <Button variant="outline" size="sm" onClick={cancelEditItem} disabled={batchRunning}>
+  1199→                                Cancelar
+  1200→                              </Button>
+  1201→                              <Button
+  1202→                                size="sm"
+  1203→                                onClick={saveEditItem}
+  1204→                                disabled={batchRunning || editText.trim().length < 40}
+  1205→                                className="gap-1.5"
+  1206→                              >
+  1207→                                <Check className="h-3.5 w-3.5" /> Guardar
+  1208→                              </Button>
+  1209→                            </div>
+  1210→                          </div>
+  1211→                          <p className="mt-2 text-xs text-muted-foreground">
+  1212→                            Al guardar, el elemento vuelve a «pendiente»: procesa el lote de nuevo para actualizar su resultado.
+  1213→                          </p>
+  1214→                        </div>
+  1215→                      )}
+  1216→                      </div>
+  1217→                    ))}
+  1218→                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+  1219→                      <Button variant="outline" size="sm" onClick={() => setBatchItems([])} disabled={batchRunning} className="gap-1.5">
+  1220→                        <Trash2 className="h-3.5 w-3.5" /> Vaciar lista
+  1221→                      </Button>
+  1222→                      <Button onClick={processBatch} disabled={batchRunning || batchItems.length === 0} className="gap-2">
+  1223→                        {batchRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+  1224→                        {batchRunning ? "Procesando lote…" : `Procesar lote (${batchItems.length})`}
+  1225→                      </Button>
+  1226→                    </div>
+  1227→                  </div>
+  1228→                )}
+  1229→
+  1230→                {batchStatus && (
+  1231→                  <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+  1232→                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> {batchStatus}
+  1233→                  </p>
+  1234→                )}
+  1235→
+  1236→                {batchItems.some((b) => b.result) && !batchRunning && (
+  1237→                  <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+  1238→                    <span className="mr-auto text-xs text-muted-foreground">Descargar todo en ZIP:</span>
+  1239→                    {(["docx", "pdf", "txt"] as const).map((fmt) => (
+  1240→                      <Button
+  1241→                        key={fmt}
+  1242→                        variant="outline"
+  1243→                        size="sm"
+  1244→                        className="gap-1.5"
+  1245→                        onClick={() => void downloadBatchZip(fmt)}
+  1246→                        disabled={exporting !== null}
+  1247→                      >
+  1248→                        {exporting === "zip" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5" />}
+  1249→                        {fmt.toUpperCase()}
+  1250→                      </Button>
+  1251→                    ))}
+  1252→                  </div>
+  1253→                )}
+  1254→                {batchItems.some((b) => b.result) && !batchRunning && (
+  1255→                  <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+  1256→                    <span className="mr-auto text-xs text-muted-foreground">Informe comparativo del lote:</span>
+  1257→                    {(["docx", "pdf"] as const).map((fmt) => (
+  1258→                      <Button
+  1259→                        key={fmt}
+  1260→                        variant="outline"
+  1261→                        size="sm"
+  1262→                        className="gap-1.5"
+  1263→                        onClick={() => void downloadReport(fmt)}
+  1264→                        disabled={exporting !== null}
+  1265→                      >
+  1266→                        {exporting === `report:${fmt}` ? (
+  1267→                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+  1268→                        ) : (
+  1269→                          <FileDown className="h-3.5 w-3.5" />
+  1270→                        )}
+  1271→                        Informe {fmt.toUpperCase()}
+  1272→                      </Button>
+  1273→                    ))}
+  1274→                  </div>
+  1275→                )}
+  1276→              </TabsContent>
+  1277→            </Tabs>
+  1278→
+  1279→            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+  1280→              <div className="flex flex-1 flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2">
+  1281→                <div className="min-w-0">
+  1282→                  <p className="text-sm font-medium">Análisis semántico con IA</p>
+  1283→                  <p className="text-xs text-muted-foreground">
+  1284→                    Un modelo de lenguaje evalúa previsibilidad, uniformidad y voz. Más preciso, tarda unos segundos más.
+  1285→                  </p>
+  1286→                </div>
+  1287→                <Switch checked={semantic} onCheckedChange={setSemantic} aria-label="Análisis semántico con IA" />
+  1288→              </div>
+  1289→              <Button onClick={analyze} disabled={!canAnalyze} className="gap-2">
+  1290→                {detecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
+  1291→                {detecting ? "Analizando…" : "Analizar texto"}
+  1292→              </Button>
+  1293→            </div>
+  1294→          </CardContent>
+  1295→        </Card>
+  1296→
+  1297→        {/* Paso 2: detección */}
+  1298→        <div ref={analysisRef} className="scroll-mt-24">
+  1299→          {detection && (
+  1300→            <Card className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+  1301→              <CardHeader>
+  1302→                <CardTitle className="flex items-center gap-2 text-xl">
+  1303→                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">2</span>
+  1304→                  Resultado de la detección
+  1305→                </CardTitle>
+  1306→                <CardDescription>{detection.summary}</CardDescription>
+  1307→              </CardHeader>
+  1308→              <CardContent className="space-y-6">
+  1309→                <div className="grid gap-6 md:grid-cols-[220px_1fr]">
+  1310→                  <div className="flex flex-col items-center gap-3">
+  1311→                    <Gauge value={detection.score} />
+  1312→                    <Badge variant="outline" className={`px-3 py-1 text-sm font-semibold ${levelBadgeClass(detection.levelKey)}`}>
+  1313→                      {detection.level}
+  1314→                    </Badge>
+  1315→                    {detection.semantic === false && (
+  1316→                      <p className="max-w-56 text-center text-[11px] leading-snug text-muted-foreground">
+  1317→                        El análisis semántico no estuvo disponible en este momento; resultado basado solo en las heurísticas de estilo.
+  1318→                      </p>
+  1319→                    )}
+  1320→                  </div>
+  1321→                  <div className="space-y-4">
+  1322→                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+  1323→                      <StatTile label="Palabras" value={detection.stats.words.toLocaleString("es-ES")} />
+  1324→                      <StatTile label="Frases" value={String(detection.stats.sentences)} />
+  1325→                      <StatTile label="Párrafos" value={String(detection.stats.paragraphs)} />
+  1326→                      <StatTile label="Palabras/frase" value={String(detection.stats.avgSentence)} />
+  1327→                      <StatTile label="Variabilidad" value={`${detection.stats.sentenceVariance}%`} />
+  1328→                    </div>
+  1329→                    <Separator />
+  1330→                    <div className="grid gap-4 sm:grid-cols-2">
+  1331→                      {detection.indicators.map((ind) => (
+  1332→                        <IndicatorBar key={ind.key} label={ind.label} score={ind.score} detail={ind.detail} />
+  1333→                      ))}
+  1334→                    </div>
+  1335→                  </div>
+  1336→                </div>
+  1337→
+  1338→                {(detection.flagged.length > 0 || detection.clichesFound.length > 0) && (
+  1339→                  <div className="grid gap-4 lg:grid-cols-2">
+  1340→                    {detection.clichesFound.length > 0 && (
+  1341→                      <div className="rounded-lg border bg-muted/30 p-4">
+  1342→                        <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+  1343→                          <MessageSquareWarning className="h-4 w-4 text-amber-600" />
+  1344→                          Frases hechas detectadas
+  1345→                        </h4>
+  1346→                        <div className="flex max-h-44 flex-wrap gap-2 overflow-y-auto">
+  1347→                          {detection.clichesFound.map((c) => (
+  1348→                            <Badge key={c.phrase} variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
+  1349→                              «{c.phrase}» ×{c.count}
+  1350→                            </Badge>
+  1351→                          ))}
+  1352→                        </div>
+  1353→                      </div>
+  1354→                    )}
+  1355→                    {detection.flagged.length > 0 && (
+  1356→                      <div className="rounded-lg border bg-muted/30 p-4">
+  1357→                        <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+  1358→                          <ScanSearch className="h-4 w-4 text-primary" />
+  1359→                          Frases sospechosas
+  1360→                        </h4>
+  1361→                        <ul className="max-h-44 space-y-2 overflow-y-auto pr-1">
+  1362→                          {detection.flagged.map((f, i) => (
+  1363→                            <li key={i} className="text-xs leading-relaxed">
+  1364→                              <span className="font-medium text-foreground">“{f.sentence}”</span>
+  1365→                              <span className="ml-1 text-muted-foreground">— {f.reason}</span>
+  1366→                            </li>
+  1367→                          ))}
+  1368→                        </ul>
+  1369→                      </div>
+  1370→                    )}
+  1371→                  </div>
+  1372→                )}
+  1373→              </CardContent>
+  1374→            </Card>
+  1375→          )}
+  1376→        </div>
+  1377→
+  1378→        {/* Paso 3: humanizar */}
+  1379→        <div>
+  1380→          {detection && inputMode !== "batch" && (
+  1381→            <Card className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+  1382→              <CardHeader>
+  1383→                <CardTitle className="flex items-center gap-2 text-xl">
+  1384→                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">3</span>
+  1385→                  Humanizar el texto
+  1386→                </CardTitle>
+  1387→                <CardDescription>
+  1388→                  Reescribe el texto con ritmo, vocabulario y estructura de escritura humana, y limpia
+  1389→                  las huellas típicas de IA.
+  1390→                </CardDescription>
+  1391→              </CardHeader>
+  1392→              <CardContent className="space-y-5">
+  1393→                {opcionesReescritura}
+  1394→
+  1395→                <div className="flex flex-col items-end gap-3">
+  1396→                  {humanizing && (
+  1397→                    <p className="text-xs text-muted-foreground">
+  1398→                      {hProgress && hProgress.total > 0
+  1399→                        ? `Reescribiendo el texto… fragmento ${hProgress.done} de ${hProgress.total}.`
+  1400→                        : "Preparando la reescritura…"}
+  1401→                    </p>
+  1402→                  )}
+  1403→                  {!humanizing && workingText.trim().length > 40000 && (
+  1404→                    <p className="text-xs text-muted-foreground">
+  1405→                      Tu texto es largo ({workingText.length.toLocaleString("es-ES")} caracteres): el
+  1406→                      proceso puede tardar más de un minuto. Verás el progreso fragmento a fragmento.
+  1407→                    </p>
+  1408→                  )}
+  1409→                  <Button onClick={humanize} disabled={humanizing} size="lg" className="gap-2">
+  1410→                    {humanizing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
+  1411→                    {humanizing ? "Humanizando…" : "Humanizar texto"}
+  1412→                  </Button>
+  1413→                </div>
+  1414→
+  1415→                {humanized?.warnings && humanized.warnings.length > 0 && (
+  1416→                  <div className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+  1417→                    {humanized.warnings.map((w, i) => (
+  1418→                      <p key={i} className="flex items-start gap-2">
+  1419→                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {w}
+  1420→                      </p>
+  1421→                    ))}
+  1422→                  </div>
+  1423→                )}
+  1424→              </CardContent>
+  1425→            </Card>
+  1426→          )}
+  1427→        </div>
+  1428→
+  1429→        {/* Paso 4: resultado */}
+  1430→        <div ref={resultRef} className="scroll-mt-24">
+  1431→          {humanized && (
+  1432→            <Card className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+  1433→              <CardHeader>
+  1434→                <CardTitle className="flex items-center gap-2 text-xl">
+  1435→                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">4</span>
+  1436→                  Texto humanizado
+  1437→                </CardTitle>
+  1438→                <CardDescription>
+  1439→                  Compara el resultado, edítalo si quieres y descárgalo en el formato que necesites.
+  1440→                </CardDescription>
+  1441→              </CardHeader>
+  1442→              <CardContent className="space-y-6">
+  1443→                {/* Comparativa de puntuaciones */}
+  1444→                {afterDetect && (
+  1445→                  <div className="flex flex-wrap items-center justify-center gap-4 rounded-xl border bg-muted/30 p-5 sm:justify-between sm:px-8">
+  1446→                    <div className="text-center">
+  1447→                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Antes</p>
+  1448→                      <p className="text-3xl font-bold" style={{ color: scoreHex(detection?.score ?? 0) }}>
+  1449→                        {detection?.score ?? "—"}%
+  1450→                      </p>
+  1451→                      <p className="text-xs text-muted-foreground">probabilidad IA</p>
+  1452→                    </div>
+  1453→                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
+  1454→                      <RefreshCw className="h-5 w-5 rotate-90 text-primary" />
+  1455→                    </div>
+  1456→                    <div className="text-center">
+  1457→                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Después</p>
+  1458→                      <p className="text-3xl font-bold" style={{ color: scoreHex(afterDetect.score) }}>
+  1459→                        {afterDetect.score}%
+  1460→                      </p>
+  1461→                      <Badge variant="outline" className={`mt-1 ${levelBadgeClass(afterDetect.levelKey)}`}>
+  1462→                        {afterDetect.level}
+  1463→                      </Badge>
+  1464→                    </div>
+  1465→                    <div className="w-full sm:w-auto">
+  1466→                      <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+  1467→                        <span>Reducción estimada</span>
+  1468→                        <span className="font-semibold text-emerald-700">
+  1469→                          −{Math.max(0, (detection?.score ?? 0) - afterDetect.score)} puntos
+  1470→                        </span>
+  1471→                      </div>
+  1472→                      <div className="h-2 w-56 overflow-hidden rounded-full bg-muted">
+  1473→                        <div
+  1474→                          className="h-full rounded-full bg-emerald-600 transition-all duration-700"
+  1475→                          style={{
+  1476→                            width: `${Math.min(
+  1477→                              100,
+  1478→                              Math.round(
+  1479→                                (Math.max(0, (detection?.score ?? 0) - afterDetect.score) /
+  1480→                                  Math.max(1, detection?.score ?? 1)) *
+  1481→                                  100
+  1482→                              )
+  1483→                            )}%`,
+  1484→                          }}
+  1485→                        />
+  1486→                      </div>
+  1487→                    </div>
+  1488→                  </div>
+  1489→                )}
+  1490→
+  1491→                {/* Textos */}
+  1492→                <Tabs defaultValue="humanized">
+  1493→                  <TabsList>
+  1494→                    <TabsTrigger value="humanized">Texto humanizado</TabsTrigger>
+  1495→                    <TabsTrigger value="original">Original</TabsTrigger>
+  1496→                  </TabsList>
+  1497→                  <TabsContent value="humanized" className="mt-3 space-y-3">
+  1498→                    <Textarea
+  1499→                      className="min-h-64 font-mono text-sm leading-relaxed"
+  1500→                      value={humanizedText}
+  1501→                      onChange={(e) => setHumanizedText(e.target.value)}
+  1502→                      aria-label="Texto humanizado editable"
+  1503→                    />
+  1504→                    <div className="flex flex-wrap items-center gap-2">
+  1505→                      <span className="mr-auto text-xs text-muted-foreground">
+  1506→                        {humanizedText.trim() ? `${humanizedText.trim().split(/\s+/).length.toLocaleString("es-ES")} palabras` : "0 palabras"}
+  1507→                        {humanized.mode === "llm" && " · reescrito con IA"}
+  1508→                        {humanized.mode === "mixed" && " · IA + reglas de limpieza"}
+  1509→                        {humanized.mode === "rules" && " · reglas de limpieza"}
+  1510→                      </span>
+  1511→                      <Button variant="outline" size="sm" onClick={copyResult} className="gap-1.5">
+  1512→                        {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+  1513→                        {copied ? "Copiado" : "Copiar"}
+  1514→                      </Button>
+  1515→                      <Button variant="outline" size="sm" onClick={reanalyze} disabled={reanalyzing} className="gap-1.5">
+  1516→                        {reanalyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+  1517→                        Reanalizar
+  1518→                      </Button>
+  1519→                    </div>
+  1520→                  </TabsContent>
+  1521→                  <TabsContent value="original" className="mt-3">
+  1522→                    <div className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-4 text-sm leading-relaxed text-muted-foreground">
+  1523→                      {workingText}
+  1524→                    </div>
+  1525→                  </TabsContent>
+  1526→                </Tabs>
+  1527→
+  1528→                {/* Descargas */}
+  1529→                <Separator />
+  1530→                <div>
+  1531→                  <div className="mb-3 flex items-start gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+  1532→                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+  1533→                    <p>
+  1534→                      <strong>Archivos generados desde cero:</strong> el documento exportado no conserva
+  1535→                      metadatos del original (autor, programa, historial de revisiones ni marcas de
+  1536→                      herramientas de IA). Se crea limpio, como si lo hubieras escrito tú.
+  1537→                    </p>
+  1538→                  </div>
+  1539→                  <div className="flex flex-wrap gap-2">
+  1540→                    <Button onClick={() => download("docx")} disabled={exporting !== null} className="gap-2">
+  1541→                      {exporting === "docx" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+  1542→                      Descargar DOCX
+  1543→                    </Button>
+  1544→                    <Button onClick={() => download("pdf")} disabled={exporting !== null} variant="outline" className="gap-2">
+  1545→                      {exporting === "pdf" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+  1546→                      Descargar PDF
+  1547→                    </Button>
+  1548→                    <Button onClick={() => download("txt")} disabled={exporting !== null} variant="outline" className="gap-2">
+  1549→                      {exporting === "txt" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+  1550→                      Descargar TXT
+  1551→                    </Button>
+  1552→                  </div>
+  1553→                </div>
+  1554→              </CardContent>
+  1555→            </Card>
+  1556→          )}
+  1557→        </div>
+  1558→      </main>
+  1559→
+  1560→      {/* Pie */}
+  1561→      <footer className="mt-auto border-t bg-card">
+  1562→        <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+  1563→          <p className="text-xs leading-relaxed text-muted-foreground">
+  1564→            <strong className="text-foreground">Uso responsable:</strong> el análisis de detección es una
+  1565→            estimación que combina heurísticas de estilo (ritmo, muletillas, estructura) y, si lo activas,
+  1566→            un análisis semántico con un modelo de lenguaje; no equivale a un veredicto de ningún detector
+  1567→            comercial, y ningún método puede garantizar un resultado concreto frente a todas las
+  1568→            herramientas existentes (los detectores comerciales también discrepan entre sí y dan falsos
+  1569→            positivos). Usa esta aplicación para mejorar la naturalidad de tus textos y respeta siempre las
+  1570→            normas de tu centro, empresa o plataforma. Los textos se procesan en memoria y no se almacenan.
+  1571→          </p>
+  1572→        </div>
+  1573→      </footer>
+  1574→    </div>
+  1575→  );
+  1576→}
+  1577→

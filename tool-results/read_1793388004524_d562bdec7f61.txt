@@ -1,0 +1,775 @@
+     1→     1→// Patrones de texto típicos de IA: compartidos entre el detector y el humanizador
+     2→     2→
+     3→     3→import type { Lang } from "./shared-types";
+     4→     4→
+     5→     5→export interface ClicheRule {
+     6→     6→  phrase: string;
+     7→     7→  weight: number; // peso en detección (por aparición)
+     8→     8→  replacements?: string[]; // alternativas humanas para el humanizador
+     9→     9→}
+    10→    10→
+    11→    11→// Frases hechas / muletillas características de modelos de lenguaje (español)
+    12→    12→export const AI_CLICHES: ClicheRule[] = [
+    13→    13→  { phrase: "en el mundo actual", weight: 2, replacements: ["hoy", "hoy en día", "a estas alturas"] },
+    14→    14→  { phrase: "en la sociedad actual", weight: 2, replacements: ["hoy", "en la sociedad de ahora"] },
+    15→    15→  { phrase: "en el panorama actual", weight: 2, replacements: ["hoy", "con el cuadro de ahora"] },
+    16→    16→  { phrase: "en la era digital", weight: 2, replacements: ["ahora", "con internet", "hoy"] },
+    17→    17→  { phrase: "en la actualidad", weight: 1.5, replacements: ["hoy", "ahora", "actualmente"] },
+    18→    18→  { phrase: "en la vida moderna", weight: 2, replacements: ["hoy"] },
+    19→    19→  { phrase: "es importante destacar que", weight: 2, replacements: ["conviene decir que", "lo cierto es que", "hace falta señalar que"] },
+    20→    20→  { phrase: "es importante señalar que", weight: 2, replacements: ["conviene decir que", "hace falta apuntar que"] },
+    21→    21→  { phrase: "es importante mencionar que", weight: 2, replacements: ["conviene decir que", "merece decirse que"] },
+    22→    22→  { phrase: "es importante resaltar que", weight: 2, replacements: ["conviene subrayar que", "hace falta decir que"] },
+    23→    23→  { phrase: "es importante tener en cuenta que", weight: 2, replacements: ["hace falta recordar que", "no hay que olvidar que", "ten en cuenta que"] },
+    24→    24→  { phrase: "cabe destacar que", weight: 2, replacements: ["destaca que", "conviene saber que", "hay que decir que"] },
+    25→    25→  { phrase: "cabe señalar que", weight: 2, replacements: ["conviene apuntar que", "señalo que"] },
+    26→    26→  { phrase: "cabe mencionar que", weight: 1.5, replacements: ["conviene mencionar que", "merece decirse que"] },
+    27→    27→  { phrase: "cabe resaltar que", weight: 2, replacements: ["conviene subrayar que"] },
+    28→    28→  { phrase: "es relevante mencionar que", weight: 1.5, replacements: ["conviene decir que"] },
+    29→    29→  { phrase: "vale la pena mencionar", weight: 1.5, replacements: ["merece la pena decir"] },
+    30→    30→  { phrase: "es digno de mención", weight: 1.5, replacements: ["merece mención"] },
+    31→    31→  { phrase: "juega un papel crucial", weight: 2, replacements: ["es clave", "resulta determinante"] },
+    32→    32→  { phrase: "juega un papel fundamental", weight: 2, replacements: ["es clave", "pesa mucho"] },
+    33→    33→  { phrase: "juega un papel importante", weight: 1.5, replacements: ["cuenta mucho", "influye bastante"] },
+    34→    34→  { phrase: "juega un papel vital", weight: 2, replacements: ["es clave"] },
+    35→    35→  { phrase: "desempeña un papel crucial", weight: 2, replacements: ["es clave"] },
+    36→    36→  { phrase: "desempeña un papel fundamental", weight: 2, replacements: ["es determinante", "es clave"] },
+    37→    37→  { phrase: "desempeña un papel importante", weight: 1.5, replacements: ["influye bastante", "cuenta mucho"] },
+    38→    38→  { phrase: "desempeña un papel vital", weight: 2, replacements: ["es clave"] },
+    39→    39→  { phrase: "un papel crucial", weight: 1, replacements: ["un sitio clave"] },
+    40→    40→  { phrase: "un papel fundamental", weight: 1, replacements: ["un peso clave"] },
+    41→    41→  { phrase: "en conclusión", weight: 2, replacements: ["al final", "para terminar", "cerrando ya"] },
+    42→    42→  { phrase: "en resumen", weight: 1.5, replacements: ["resumiendo", "en corto", "dicho rápido"] },
+    43→    43→  { phrase: "en definitiva", weight: 1.5, replacements: ["a la postre", "al final"] },
+    44→    44→  { phrase: "en síntesis", weight: 1.5, replacements: ["resumiendo"] },
+    45→    45→  { phrase: "para concluir", weight: 2, replacements: ["para terminar", "para acabar"] },
+    46→    46→  { phrase: "como conclusión", weight: 2, replacements: ["para cerrar"] },
+    47→    47→  { phrase: "es fundamental", weight: 1, replacements: ["es clave", "hace falta", "es básico"] },
+    48→    48→  { phrase: "es esencial", weight: 1, replacements: ["es clave", "es de lo que más importa"] },
+    49→    49→  { phrase: "es crucial", weight: 1.5, replacements: ["es clave", "decide mucho"] },
+    50→    50→  { phrase: "de vital importancia", weight: 2, replacements: ["muy importante", "clave"] },
+    51→    51→  { phrase: "de suma importancia", weight: 2, replacements: ["muy importante"] },
+    52→    52→  { phrase: "de gran importancia", weight: 1, replacements: ["muy importante"] },
+    53→    53→  { phrase: "una amplia gama de", weight: 2, replacements: ["todo tipo de", "muchos tipos de"] },
+    54→    54→  { phrase: "una gran variedad de", weight: 1.5, replacements: ["todo tipo de", "mil tipos de"] },
+    55→    55→  { phrase: "una gran cantidad de", weight: 0.5, replacements: ["un montón de", "mucha"] },
+    56→    56→  { phrase: "ha demostrado ser", weight: 1.5, replacements: ["ha acabado siendo", "resulta ser", "se ha mostrado"] },
+    57→    57→  { phrase: "se ha demostrado que", weight: 1, replacements: ["está visto que", "queda claro que"] },
+    58→    58→  { phrase: "es ampliamente reconocido", weight: 2, replacements: ["todo el mundo sabe", "es de sobra conocido"] },
+    59→    59→  { phrase: "ampliamente reconocido", weight: 1.5, replacements: ["de sobra conocido"] },
+    60→    60→  { phrase: "sin lugar a dudas", weight: 1.5, replacements: ["sin duda", "a todas luces"] },
+    61→    61→  { phrase: "sin duda alguna", weight: 1, replacements: ["sin duda", "claro"] },
+    62→    62→  { phrase: "en este sentido", weight: 1, replacements: ["en esa línea", "así las cosas"] },
+    63→    63→  { phrase: "a lo largo de los años", weight: 1, replacements: ["con los años", "con el tiempo"] },
+    64→    64→  { phrase: "a lo largo de la historia", weight: 1.5, replacements: ["con el tiempo", "desde siempre"] },
+    65→    65→  { phrase: "sumérgete en", weight: 2, replacements: ["mete de lleno en", "entra de lleno en"] },
+    66→    66→  { phrase: "sumérgete", weight: 2, replacements: ["mete de lleno"] },
+    67→    67→  { phrase: "adentrarse en", weight: 1.5, replacements: ["entrar en", "meterse en"] },
+    68→    68→  { phrase: "adéntrate en", weight: 2, replacements: ["entra de lleno en"] },
+    69→    69→  { phrase: "desentrañar", weight: 1, replacements: ["aclarar"] },
+    70→    70→  { phrase: "allanar el camino", weight: 2, replacements: ["abrir camino"] },
+    71→    71→  { phrase: "aprovechar el poder de", weight: 2, replacements: ["sacar partido de", "aprovechar"] },
+    72→    72→  { phrase: "desbloquear el potencial", weight: 2, replacements: ["sacar todo el partido", "aprovechar"] },
+    73→    73→  { phrase: "el potencial de", weight: 0.5, replacements: ["lo que se puede sacar de"] },
+    74→    74→  { phrase: "revolucionar", weight: 1, replacements: ["cambiar de arriba abajo", "dar la vuelta a"] },
+    75→    75→  { phrase: "transformador", weight: 1, replacements: ["que cambia las cosas"] },
+    76→    76→  { phrase: "las complejidades de", weight: 1.5, replacements: ["los líos de", "lo complicado de"] },
+    77→    77→  { phrase: "las complejidades", weight: 1, replacements: ["lo complicado"] },
+    78→    78→  { phrase: "innumerables", weight: 1, replacements: ["un montón de", "mil"] },
+    79→    79→  { phrase: "infinitas posibilidades", weight: 2, replacements: ["mil posibilidades", "mucho margen"] },
+    80→    80→  { phrase: "las posibilidades son infinitas", weight: 2, replacements: ["se puede hacer mucho", "hay mucho por donde tirar"] },
+    81→    81→  { phrase: "el futuro es prometedor", weight: 2, replacements: ["el futuro pinta bien"] },
+    82→    82→  { phrase: "un testimonio del", weight: 1.5, replacements: ["una muestra del"] },
+    83→    83→  { phrase: "un testimonio de", weight: 1.5, replacements: ["una muestra de"] },
+    84→    84→  { phrase: "testamento de", weight: 1.5, replacements: ["prueba de"] },
+    85→    85→  { phrase: "en el corazón de", weight: 1, replacements: ["en pleno", "dentro de"] },
+    86→    86→  { phrase: "en el bullicio de", weight: 2, replacements: ["en medio de"] },
+    87→    87→  { phrase: "en el telón de fondo", weight: 2, replacements: ["de fondo"] },
+    88→    88→  { phrase: "una fusión perfecta de", weight: 2, replacements: ["una mezcla de"] },
+    89→    89→  { phrase: "fusión perfecta", weight: 1.5, replacements: ["mezcla redonda"] },
+    90→    90→  { phrase: "sinergia", weight: 1.5, replacements: ["colaboración"] },
+    91→    91→  { phrase: "holístico", weight: 1.5, replacements: ["global", "completo"] },
+    92→    92→  { phrase: "holística", weight: 1.5, replacements: ["global", "completa"] },
+    93→    93→  { phrase: "meticuloso", weight: 0.5, replacements: ["cuidadoso", "minucioso"] },
+    94→    94→  { phrase: "meticulosa", weight: 0.5, replacements: ["cuidadosa", "minuciosa"] },
+    95→    95→  { phrase: "siéntete libre de", weight: 2, replacements: ["puedes", "no cortes en"] },
+    96→    96→  { phrase: "no dudes en", weight: 1.5, replacements: ["puedes", "anímate a"] },
+    97→    97→  { phrase: "embarcarse en", weight: 1.5, replacements: ["arrancar", "lanzarse a"] },
+    98→    98→  { phrase: "marcar el comienzo de", weight: 2, replacements: ["abrir", "dar empiezo a"] },
+    99→    99→  { phrase: "en última instancia", weight: 1, replacements: ["al final", "a la postre"] },
+   100→   100→  { phrase: "en esencia", weight: 1, replacements: ["en el fondo"] },
+   101→   101→  { phrase: "esencialmente", weight: 0.5, replacements: ["en el fondo"] },
+   102→   102→  { phrase: "por ende", weight: 1.5, replacements: ["así que", "por eso"] },
+   103→   103→  { phrase: "por consiguiente", weight: 1.5, replacements: ["así que", "por eso"] },
+   104→   104→  { phrase: "asimismo", weight: 1.5, replacements: ["también", "encima", "además de eso"] },
+   105→   105→  { phrase: "no obstante", weight: 0.5, replacements: ["aun así", "ahora bien", "eso sí"] },
+   106→   106→  { phrase: "en primer lugar", weight: 0.5, replacements: ["primero", "para empezar"] },
+   107→   107→  { phrase: "en segundo lugar", weight: 0.5, replacements: ["luego", "después"] },
+   108→   108→  { phrase: "en tercer lugar", weight: 0.5, replacements: ["después", "tercero"] },
+   109→   109→  { phrase: "por otro lado", weight: 0.5, replacements: ["aparte", "a la vez", "aparte de eso"] },
+   110→   110→  { phrase: "por una parte", weight: 0.5, replacements: ["por un lado"] },
+   111→   111→  { phrase: "dicho esto", weight: 0.5, replacements: ["dicho lo cual", "y con esto"] },
+   112→   112→  { phrase: "a grandes rasgos", weight: 0.5 },
+   113→   113→  { phrase: "en el telón", weight: 2, replacements: ["de fondo"] },
+   114→   114→  { phrase: "navegar por", weight: 0.5, replacements: ["moverse por", "recorrer"] },
+   115→   115→  { phrase: "panorama", weight: 0.5, replacements: ["escenario", "cuadro"] },
+   116→   116→  { phrase: "robusto", weight: 0.5, replacements: ["sólido"] },
+   117→   117→  { phrase: "robusta", weight: 0.5, replacements: ["sólida"] },
+   118→   118→  { phrase: "imprescindible", weight: 0.5, replacements: ["imprescindible" ] },
+   119→   119→  { phrase: "pivotal", weight: 2, replacements: ["clave"] },
+   120→   120→  { phrase: "fomentar", weight: 0.3 },
+   121→   121→  // --- segunda tanda: patrones frecuentes en salidas recientes de modelos ---
+   122→   122→  { phrase: "es importante recordar que", weight: 2, replacements: ["conviene recordar que", "hace falta recordar que"] },
+   123→   123→  { phrase: "no hay que olvidar que", weight: 1.5, replacements: ["recuerda que", "no olvides que"] },
+   124→   124→  { phrase: "cabe recalcar que", weight: 2, replacements: ["conviene subrayar que"] },
+   125→   125→  { phrase: "cabe subrayar que", weight: 2, replacements: ["conviene subrayar que"] },
+   126→   126→  { phrase: "en resumidas cuentas", weight: 1.5, replacements: ["en corto", "resumiendo"] },
+   127→   127→  { phrase: "a fin de cuentas", weight: 1, replacements: ["al final"] },
+   128→   128→  { phrase: "en este contexto", weight: 1, replacements: ["aquí", "en este cuadro"] },
+   129→   129→  { phrase: "de cara al futuro", weight: 1.5, replacements: ["de aquí en adelante", "mirando adelante"] },
+   130→   130→  { phrase: "la clave está en", weight: 1.5, replacements: ["lo importante es", "el truco está en"] },
+   131→   131→  { phrase: "no se trata solo de", weight: 1.5, replacements: ["no es solo cuestión de"] },
+   132→   132→  { phrase: "no se trata únicamente de", weight: 1.5, replacements: ["no es solo cuestión de"] },
+   133→   133→  { phrase: "punto de inflexión", weight: 1.5, replacements: ["punto de giro", "cambio decisivo"] },
+   134→   134→  { phrase: "una nueva era", weight: 1.5, replacements: ["un momento nuevo"] },
+   135→   135→  { phrase: "cambio de paradigma", weight: 1.5, replacements: ["cambio de fondo"] },
+   136→   136→  { phrase: "profundizar en", weight: 0.5, replacements: ["entrar de lleno en", "detallar"] },
+   137→   137→  { phrase: "a lo largo de este artículo", weight: 2, replacements: ["en estas líneas"] },
+   138→   138→  { phrase: "en este artículo", weight: 1, replacements: ["aquí"] },
+   139→   139→  { phrase: "exploremos", weight: 2, replacements: ["veamos", "miremos"] },
+   140→   140→  { phrase: "adentrémonos", weight: 2, replacements: ["entremos"] },
+   141→   141→  { phrase: "desglosar", weight: 1, replacements: ["detallar", "ir punto por punto"] },
+   142→   142→  { phrase: "es innegable que", weight: 2, replacements: ["está claro que", "se ve a simple vista que"] },
+   143→   143→  { phrase: "es indudable que", weight: 1.5, replacements: ["está claro que"] },
+   144→   144→  { phrase: "es evidente que", weight: 0.5, replacements: ["está claro que", "se ve que"] },
+   145→   145→  { phrase: "resulta fundamental", weight: 1.5, replacements: ["es clave", "hace falta"] },
+   146→   146→  { phrase: "resulta esencial", weight: 1.5, replacements: ["es clave"] },
+   147→   147→  { phrase: "resulta crucial", weight: 1.5, replacements: ["es clave", "decide mucho"] },
+   148→   148→  { phrase: "se ha convertido en", weight: 0.5, replacements: ["acaba siendo", "es hoy"] },
+   149→   149→  { phrase: "a día de hoy", weight: 1, replacements: ["hoy", "todavía"] },
+   150→   150→  { phrase: "hoy por hoy", weight: 0.5, replacements: ["hoy"] },
+   151→   151→  { phrase: "es menester", weight: 1.5, replacements: ["hace falta"] },
+   152→   152→  { phrase: "con el fin de", weight: 0.5, replacements: ["para"] },
+   153→   153→  { phrase: "en el trasfondo", weight: 1.5, replacements: ["de fondo"] },
+   154→   154→  { phrase: "una letanía de", weight: 1.5, replacements: ["un sinfín de"] },
+   155→   155→  { phrase: "hacia dónde se dirige", weight: 1.5, replacements: ["hacia dónde va"] },
+   156→   156→  { phrase: "vertebrar", weight: 1.5, replacements: ["estructurar", "dar forma a"] },
+   157→   157→  { phrase: "navegar hacia", weight: 1.5, replacements: ["ir hacia"] },
+   158→   158→];
+   159→   159→
+   160→   160→// Marcas de escritura humana (coloquialismos, primera persona, etc.)
+   161→   161→export const HUMAN_MARKERS: string[] = [
+   162→   162→  "la verdad", "o sea", "en plan", "digamos", "vamos a ver", "bueno,",
+   163→   163→  "pues", "mira,", "oye", "ojo:", "ojo,", "de hecho", "es que", "es más",
+   164→   164→  "total, que", "francamente", "personalmente", "creo que", "me parece",
+   165→   165→  "en mi opinión", "en mi experiencia", "recuerdo que", "por cierto",
+   166→   166→  "al menos", "por lo menos", "aunque sea", "un poco", "algo así",
+   167→   167→  "por así decirlo", "dicho de otro modo", "para qué engañarnos",
+   168→   168→  "jaja", "jeje", "vaya", "uf,", "eh,", "oye,", "anda que", "menudo",
+   169→   169→  "cómo no", "claro está", "a decir verdad", "la cuestión es", "yo",
+   170→   170→  "mi", "mí", "nuestro", "nuestra", "anoche", "ayer", "esta mañana",
+   171→   171→  "la semana pasada", "el otro día",
+   172→   172→];
+   173→   173→
+   174→   174→// Conectores de inicio de frase (densidad alta = estilo IA)
+   175→   175→export const SENTENCE_START_CONNECTORS: string[] = [
+   176→   176→  "además", "asimismo", "no obstante", "sin embargo", "por lo tanto",
+   177→   177→  "por tanto", "por consiguiente", "por ende", "en consecuencia",
+   178→   178→  "en primer lugar", "en segundo lugar", "en tercer lugar", "por último",
+   179→   179→  "por otro lado", "por una parte", "por otra parte", "en este sentido",
+   180→   180→  "en efecto", "de hecho", "así mismo", "así pues", "es más", "ahora bien",
+   181→   181→  "en resumen", "en conclusión", "en definitiva", "en síntesis",
+   182→   182→  "para concluir", "finalmente", "en consecuencia", "sumado a esto",
+   183→   183→  "a su vez", "de igual modo", "de manera similar", "en consecuencia",
+   184→   184→  "cabe destacar", "cabe señalar", "es importante", "es fundamental",
+   185→   185→  "es crucial", "en primer término", "seguidamente", "posteriormente",
+   186→   186→];
+   187→   187→
+   188→   188→// Estructuras "no solo ... sino también"
+   189→   189→export const NO_SOLO_REGEX = /no solo\b([^.;!?]{2,120}?)\bsino (?:también|además)\b/giu;
+   190→   190→
+   191→   191→// ---------- inglés ----------
+   192→   192→
+   193→   193→// Frases hechas / muletillas características de modelos de lenguaje (inglés)
+   194→   194→export const AI_CLICHES_EN: ClicheRule[] = [
+   195→   195→  { phrase: "in today's world", weight: 2, replacements: ["today", "these days"] },
+   196→   196→  { phrase: "in today's fast-paced world", weight: 2.5, replacements: ["today", "these days"] },
+   197→   197→  { phrase: "in today's digital age", weight: 2.5, replacements: ["today", "with the internet"] },
+   198→   198→  { phrase: "in the modern world", weight: 2, replacements: ["today"] },
+   199→   199→  { phrase: "in the digital age", weight: 2, replacements: ["today", "with the internet"] },
+   200→   200→  { phrase: "in today's society", weight: 2, replacements: ["today", "in society right now"] },
+   201→   201→  { phrase: "in the ever-evolving", weight: 2.5, replacements: ["in the changing"] },
+   202→   202→  { phrase: "ever-evolving", weight: 1.5, replacements: ["changing", "shifting"] },
+   203→   203→  { phrase: "it is important to note that", weight: 2.5, replacements: ["notably,", "keep in mind:", "worth saying:"] },
+   204→   204→  { phrase: "it's important to note that", weight: 2.5, replacements: ["notably,", "keep in mind:"] },
+   205→   205→  { phrase: "it is important to remember that", weight: 2, replacements: ["remember that", "keep in mind that"] },
+   206→   206→  { phrase: "it is worth noting that", weight: 2.5, replacements: ["notably,", "worth saying:"] },
+   207→   207→  { phrase: "it's worth noting that", weight: 2.5, replacements: ["notably,", "worth saying:"] },
+   208→   208→  { phrase: "it is essential to note", weight: 2, replacements: ["note that"] },
+   209→   209→  { phrase: "it should be noted that", weight: 2, replacements: ["and note:", "also:"] },
+   210→   210→  { phrase: "it is important to understand that", weight: 2, replacements: ["understand that", "the point is that"] },
+   211→   211→  { phrase: "plays a crucial role", weight: 2.5, replacements: ["is key", "matters a lot"] },
+   212→   212→  { phrase: "plays a vital role", weight: 2.5, replacements: ["is key"] },
+   213→   213→  { phrase: "plays an important role", weight: 2, replacements: ["counts a lot", "matters"] },
+   214→   214→  { phrase: "plays a significant role", weight: 2, replacements: ["matters a lot"] },
+   215→   215→  { phrase: "serves as a testament", weight: 2.5, replacements: ["shows"] },
+   216→   216→  { phrase: "a testament to", weight: 2, replacements: ["proof of", "a sign of"] },
+   217→   217→  { phrase: "stands as a testament", weight: 2.5, replacements: ["shows"] },
+   218→   218→  { phrase: "in conclusion", weight: 2.5, replacements: ["all in all", "to wrap up", "in the end"] },
+   219→   219→  { phrase: "in summary", weight: 2, replacements: ["in short", "to sum up"] },
+   220→   220→  { phrase: "to summarize", weight: 2, replacements: ["in short", "long story short"] },
+   221→   221→  { phrase: "in essence", weight: 1.5, replacements: ["at heart", "in short"] },
+   222→   222→  { phrase: "to conclude", weight: 2, replacements: ["to wrap up", "to end"] },
+   223→   223→  { phrase: "delve into", weight: 2.5, replacements: ["dig into", "get into", "look closely at"] },
+   224→   224→  { phrase: "delves into", weight: 2.5, replacements: ["digs into", "gets into"] },
+   225→   225→  { phrase: "delving into", weight: 2.5, replacements: ["digging into"] },
+   226→   226→  { phrase: "in the realm of", weight: 2, replacements: ["in", "within"] },
+   227→   227→  { phrase: "navigate the complexities", weight: 2.5, replacements: ["deal with the mess of"] },
+   228→   228→  { phrase: "navigating the", weight: 1.5, replacements: ["dealing with the"] },
+   229→   229→  { phrase: "unlock the potential", weight: 2.5, replacements: ["get the most out of"] },
+   230→   230→  { phrase: "unlock the full potential", weight: 2.5, replacements: ["get everything out of"] },
+   231→   231→  { phrase: "harness the power of", weight: 2.5, replacements: ["put to work", "make the most of"] },
+   232→   232→  { phrase: "unleash the power of", weight: 2.5, replacements: ["put to work"] },
+   233→   233→  { phrase: "a myriad of", weight: 2, replacements: ["countless", "loads of"] },
+   234→   234→  { phrase: "a plethora of", weight: 2.5, replacements: ["plenty of", "loads of"] },
+   235→   235→  { phrase: "a wide range of", weight: 1.5, replacements: ["all kinds of", "many"] },
+   236→   236→  { phrase: "a wide array of", weight: 2, replacements: ["all kinds of"] },
+   237→   237→  { phrase: "a wealth of", weight: 1.5, replacements: ["plenty of"] },
+   238→   238→  { phrase: "revolutionize", weight: 1.5, replacements: ["turn upside down", "shake up"] },
+   239→   239→  { phrase: "game-changer", weight: 2, replacements: ["a big deal", "a real shift"] },
+   240→   240→  { phrase: "paradigm shift", weight: 2, replacements: ["deep change", "sea change"] },
+   241→   241→  { phrase: "cutting-edge", weight: 1.5, replacements: ["latest", "brand new"] },
+   242→   242→  { phrase: "state-of-the-art", weight: 1.5, replacements: ["top", "latest"] },
+   243→   243→  { phrase: "seamlessly", weight: 2, replacements: ["smoothly", "easily"] },
+   244→   244→  { phrase: "seamless", weight: 1.5, replacements: ["smooth"] },
+   245→   245→  { phrase: "robust", weight: 0.5, replacements: ["solid", "sturdy"] },
+   246→   246→  { phrase: "pivotal", weight: 2, replacements: ["key", "central"] },
+   247→   247→  { phrase: "meticulous", weight: 1, replacements: ["careful", "thorough"] },
+   248→   248→  { phrase: "meticulously", weight: 1.5, replacements: ["carefully"] },
+   249→   249→  { phrase: "holistic", weight: 1.5, replacements: ["complete", "all-around"] },
+   250→   250→  { phrase: "the complexities of", weight: 1.5, replacements: ["the mess of", "what's tricky about"] },
+   251→   251→  { phrase: "embark on", weight: 2, replacements: ["start", "set out on"] },
+   252→   252→  { phrase: "embark on a journey", weight: 2.5, replacements: ["set out", "get going"] },
+   253→   253→  { phrase: "take a deep dive into", weight: 2.5, replacements: ["dig into"] },
+   254→   254→  { phrase: "deep dive", weight: 1.5, replacements: ["close look"] },
+   255→   255→  { phrase: "the possibilities are endless", weight: 2.5, replacements: ["there's a lot you can do"] },
+   256→   256→  { phrase: "endless possibilities", weight: 2.5, replacements: ["plenty of options"] },
+   257→   257→  { phrase: "the future is bright", weight: 2, replacements: ["things look good"] },
+   258→   258→  { phrase: "a new era of", weight: 2, replacements: ["a fresh chapter of"] },
+   259→   259→  { phrase: "at the forefront of", weight: 2, replacements: ["leading", "at the front of"] },
+   260→   260→  { phrase: "pave the way for", weight: 2, replacements: ["open the door to", "set up"] },
+   261→   261→  { phrase: "underscores the importance", weight: 2, replacements: ["shows why it matters"] },
+   262→   262→  { phrase: "highlight the importance", weight: 1.5, replacements: ["show why it matters"] },
+   263→   263→  { phrase: "when it comes to", weight: 0.5, replacements: ["with", "regarding"] },
+   264→   264→  { phrase: "look no further", weight: 2.5, replacements: ["you've found it", "stop searching"] },
+   265→   265→  { phrase: "whether you're a", weight: 2, replacements: ["if you're a"] },
+   266→   266→  { phrase: "elevate your", weight: 2, replacements: ["improve your", "boost your"] },
+   267→   267→  { phrase: "take it to the next level", weight: 2, replacements: ["step it up"] },
+   268→   268→  { phrase: "foster", weight: 0.3, replacements: ["build", "encourage"] },
+   269→   269→  { phrase: "leverage", weight: 1, replacements: ["use", "put to work"] },
+   270→   270→  { phrase: "utilize", weight: 1, replacements: ["use"] },
+   271→   271→  { phrase: "utilizing", weight: 1, replacements: ["using"] },
+   272→   272→  { phrase: "comprehensive", weight: 0.5, replacements: ["complete", "thorough"] },
+   273→   273→  { phrase: "notably", weight: 0.5, replacements: ["especially"] },
+   274→   274→  { phrase: "significantly", weight: 0.5, replacements: ["a lot", "by a lot"] },
+   275→   275→  { phrase: "furthermore", weight: 1.5, replacements: ["also", "on top of that"] },
+   276→   276→  { phrase: "moreover", weight: 1.5, replacements: ["also", "and"] },
+   277→   277→  { phrase: "additionally", weight: 1.5, replacements: ["also", "plus"] },
+   278→   278→  { phrase: "consequently", weight: 1.5, replacements: ["so", "as a result"] },
+   279→   279→  { phrase: "nevertheless", weight: 1, replacements: ["even so", "still"] },
+   280→   280→  { phrase: "nonetheless", weight: 1, replacements: ["even so", "still"] },
+   281→   281→  { phrase: "as we navigate", weight: 2, replacements: ["as we deal with"] },
+   282→   282→  { phrase: "in the vast landscape of", weight: 2.5, replacements: ["in"] },
+   283→   283→  { phrase: "the landscape of", weight: 1, replacements: ["the world of"] },
+   284→   284→  { phrase: "a rich tapestry of", weight: 2.5, replacements: ["a mix of"] },
+   285→   285→  { phrase: "tapestry", weight: 1.5, replacements: ["mix", "blend"] },
+   286→   286→  { phrase: "first and foremost", weight: 1.5, replacements: ["first"] },
+   287→   287→  { phrase: "last but not least", weight: 2, replacements: ["finally"] },
+   288→   288→  { phrase: "in this article", weight: 1, replacements: ["here"] },
+   289→   289→  { phrase: "throughout this article", weight: 2, replacements: ["in these lines"] },
+   290→   290→  { phrase: "it goes without saying", weight: 2, replacements: ["obviously"] },
+   291→   291→  { phrase: "shed light on", weight: 2, replacements: ["clarify", "explain"] },
+   292→   292→  { phrase: "in light of", weight: 1, replacements: ["given", "because of"] },
+   293→   293→  { phrase: "the key takeaway", weight: 2, replacements: ["the point", "what matters"] },
+   294→   294→  { phrase: "keep in mind that", weight: 1, replacements: ["remember that"] },
+   295→   295→  { phrase: "is crucial for", weight: 1.5, replacements: ["matters for", "is key to"] },
+   296→   296→  { phrase: "is essential for", weight: 1.5, replacements: ["matters for"] },
+   297→   297→  { phrase: "it is advisable to", weight: 2, replacements: ["it's best to", "you should"] },
+   298→   298→  { phrase: "ensure that", weight: 0.5, replacements: ["make sure"] },
+   299→   299→  { phrase: "in order to", weight: 0.5, replacements: ["to"] },
+   300→   300→  { phrase: "due to the fact that", weight: 2, replacements: ["because"] },
+   301→   301→  { phrase: "a double-edged sword", weight: 1.5, replacements: ["cuts both ways"] },
+   302→   302→  { phrase: "the ever-growing", weight: 2, replacements: ["the growing"] },
+   303→   303→  { phrase: "ever-growing", weight: 1.5, replacements: ["growing"] },
+   304→   304→  { phrase: "myriad", weight: 1.5, replacements: ["countless"] },
+   305→   305→];
+   306→   306→
+   307→   307→// Marcas de escritura humana en inglés
+   308→   308→export const HUMAN_MARKERS_EN: string[] = [
+   309→   309→  "i think", "i guess", "i mean", "you know", "kind of", "sort of", "pretty much",
+   310→   310→  "to be honest", "honestly", "actually", "basically", "anyway", "by the way",
+   311→   311→  "to be fair", "in my experience", "in my opinion", "i remember", "i've noticed",
+   312→   312→  "at least", "a bit", "sorta", "yeah", "nope", "weird", "messy", "annoying",
+   313→   313→  "haha", "hahaha", "omg", "ugh", "well,", "look,", "listen,", "seriously",
+   314→   314→  "yesterday", "last night", "last week", "the other day", "my", "our", "we",
+   315→   315→  "i", "me", "let's", "don't", "can't", "won't", "it's been",
+   316→   316→];
+   317→   317→
+   318→   318→// Conectores de inicio de frase en inglés (densidad alta = estilo IA)
+   319→   319→export const SENTENCE_START_CONNECTORS_EN: string[] = [
+   320→   320→  "moreover", "furthermore", "additionally", "however", "therefore", "thus",
+   321→   321→  "consequently", "hence", "in addition", "in conclusion", "in summary",
+   322→   322→  "overall", "firstly", "secondly", "thirdly", "finally", "lastly",
+   323→   323→  "on the other hand", "in particular", "notably", "importantly",
+   324→   324→  "specifically", "meanwhile", "nevertheless", "nonetheless", "as a result",
+   325→   325→  "for instance", "for example", "ultimately", "in essence", "indeed",
+   326→   326→  "in fact", "similarly", "likewise", "conversely", "subsequently",
+   327→   327→  "in contrast", "to conclude", "to summarize", "as such", "accordingly",
+   328→   328→];
+   329→   329→
+   330→   330→// Estructuras "not only ... but also"
+   331→   331→export const NOT_ONLY_REGEX = /not only\b([^.;!?]{2,120}?)\bbut (?:also|as well)\b/giu;
+   332→   332→
+   333→   333→// ---------- francés ----------
+   334→   334→
+   335→   335→export const AI_CLICHES_FR: ClicheRule[] = [
+   336→   336→  { phrase: "de nos jours", weight: 1.5, replacements: ["aujourd'hui", "ces derniers temps"] },
+   337→   337→  { phrase: "dans le monde actuel", weight: 2, replacements: ["aujourd'hui"] },
+   338→   338→  { phrase: "dans la société actuelle", weight: 2, replacements: ["aujourd'hui"] },
+   339→   339→  { phrase: "dans le monde d'aujourd'hui", weight: 2, replacements: ["aujourd'hui"] },
+   340→   340→  { phrase: "à l'ère numérique", weight: 2, replacements: ["aujourd'hui", "avec internet"] },
+   341→   341→  { phrase: "à l'ère du numérique", weight: 2, replacements: ["aujourd'hui", "avec internet"] },
+   342→   342→  { phrase: "en cette ère de", weight: 2, replacements: ["dans ce temps de"] },
+   343→   343→  { phrase: "il est important de noter que", weight: 2.5, replacements: ["à noter que", "précisons que"] },
+   344→   344→  { phrase: "il convient de noter que", weight: 2, replacements: ["notons que", "précisons que"] },
+   345→   345→  { phrase: "il est important de souligner que", weight: 2.5, replacements: ["soulignons que"] },
+   346→   346→  { phrase: "il convient de souligner que", weight: 2, replacements: ["soulignons que"] },
+   347→   347→  { phrase: "il faut souligner que", weight: 1.5, replacements: ["soulignons que"] },
+   348→   348→  { phrase: "il faut noter que", weight: 1.5, replacements: ["notons que"] },
+   349→   349→  { phrase: "il est essentiel de", weight: 1.5, replacements: ["il faut"] },
+   350→   350→  { phrase: "il est crucial de", weight: 1.5, replacements: ["il faut absolument"] },
+   351→   351→  { phrase: "il est indispensable de", weight: 1.5, replacements: ["il faut"] },
+   352→   352→  { phrase: "joue un rôle crucial", weight: 2, replacements: ["est essentiel", "compte énormément"] },
+   353→   353→  { phrase: "joue un rôle important", weight: 1.5, replacements: ["compte beaucoup"] },
+   354→   354→  { phrase: "joue un rôle clé", weight: 2, replacements: ["est essentiel"] },
+   355→   355→  { phrase: "joue un rôle déterminant", weight: 2, replacements: ["décide de beaucoup de choses"] },
+   356→   356→  { phrase: "occupe une place centrale", weight: 1.5, replacements: ["est au cœur de"] },
+   357→   357→  { phrase: "en conclusion", weight: 2, replacements: ["pour finir", "au final"] },
+   358→   358→  { phrase: "en résumé", weight: 1.5, replacements: ["bref", "en gros"] },
+   359→   359→  { phrase: "en somme", weight: 1.5, replacements: ["au fond"] },
+   360→   360→  { phrase: "en définitive", weight: 1.5, replacements: ["au final"] },
+   361→   361→  { phrase: "pour conclure", weight: 2, replacements: ["pour finir"] },
+   362→   362→  { phrase: "plongeons dans", weight: 2, replacements: ["entrons dans"] },
+   363→   363→  { phrase: "explorons", weight: 1.5, replacements: ["regardons"] },
+   364→   364→  { phrase: "démêler les complexités de", weight: 2, replacements: ["comprendre les méandres de"] },
+   365→   365→  { phrase: "libérer le potentiel de", weight: 2, replacements: ["tirer parti de"] },
+   366→   366→  { phrase: "exploiter la puissance de", weight: 2, replacements: ["tirer parti de"] },
+   367→   367→  { phrase: "une myriade de", weight: 2, replacements: ["des tas de", "quantité de"] },
+   368→   368→  { phrase: "une pléthore de", weight: 2, replacements: ["des tas de"] },
+   369→   369→  { phrase: "une large gamme de", weight: 1.5, replacements: ["toutes sortes de"] },
+   370→   370→  { phrase: "un large éventail de", weight: 1.5, replacements: ["toutes sortes de"] },
+   371→   371→  { phrase: "révolutionner", weight: 1, replacements: ["bouleverser"] },
+   372→   372→  { phrase: "changement de paradigme", weight: 1.5, replacements: ["changement de fond"] },
+   373→   373→  { phrase: "de pointe", weight: 1, replacements: ["dernier cri"] },
+   374→   374→  { phrase: "à la pointe de", weight: 1.5, replacements: ["en tête de"] },
+   375→   375→  { phrase: "en toute transparence", weight: 1.5, replacements: ["sans effort"] },
+   376→   376→  { phrase: "ouvrir la voie à", weight: 1.5, replacements: ["préparer le terrain pour"] },
+   377→   377→  { phrase: "les possibilités sont infinies", weight: 2, replacements: ["on peut faire beaucoup"] },
+   378→   378→  { phrase: "un témoignage de", weight: 1.5, replacements: ["une preuve de"] },
+   379→   379→  { phrase: "dans cet article", weight: 1, replacements: ["ici"] },
+   380→   380→  { phrase: "au fil de cet article", weight: 2, replacements: ["dans ces lignes"] },
+   381→   381→  { phrase: "il va sans dire que", weight: 2, replacements: ["évidemment"] },
+   382→   382→  { phrase: "mettre en lumière", weight: 1.5, replacements: ["montrer", "révéler"] },
+   383→   383→  { phrase: "cette approche holistique", weight: 1.5, replacements: ["cette vue d'ensemble"] },
+   384→   384→  { phrase: "dernier point mais non le moindre", weight: 2, replacements: ["enfin"] },
+   385→   385→  { phrase: "dans le paysage de", weight: 1.5, replacements: ["dans le monde de"] },
+   386→   386→  { phrase: "il est indéniable que", weight: 2, replacements: ["c'est clair que"] },
+   387→   387→];
+   388→   388→
+   389→   389→export const HUMAN_MARKERS_FR: string[] = [
+   390→   390→  "je pense", "je crois", "je trouve", "en fait", "franchement", "honnêtement",
+   391→   391→  "en gros", "genre", "bref", "bon,", "écoute", "dis donc", "à vrai dire",
+   392→   392→  "pour être honnête", "de mon temps", "l'autre jour", "hier", "la semaine dernière",
+   393→   393→  "je", "me", "mon", "ma", "mes", "nos", "notre", "on verra", "peut-être",
+   394→   394→  "un peu", "hein", "ouais", "euh", "ben,", "quoi", "chez moi", "d'ailleurs",
+   395→   395→  "à mon avis", "si tu veux", "va savoir", "tant pis", "du coup",
+   396→   396→];
+   397→   397→
+   398→   398→export const SENTENCE_START_CONNECTORS_FR: string[] = [
+   399→   399→  "de plus", "en outre", "par ailleurs", "cependant", "toutefois", "néanmoins",
+   400→   400→  "pourtant", "donc", "ainsi", "par conséquent", "en conséquence",
+   401→   401→  "premièrement", "deuxièmement", "troisièmement", "en premier lieu",
+   402→   402→  "en second lieu", "enfin", "d'une part", "d'autre part", "en effet",
+   403→   403→  "de nos jours", "en particulier", "notamment", "de même", "de surcroît",
+   404→   404→  "en définitive", "finalement", "pour résumer", "en résumé", "en conclusion",
+   405→   405→  "il est important", "il convient", "il faut noter", "à cet égard",
+   406→   406→  "dès lors", "de fait", "en revanche", "quant à", "en somme",
+   407→   407→];
+   408→   408→
+   409→   409→export const NON_SEULEMENT_REGEX = /non seulement\b([^.;!?]{2,120}?)\bmais (?:aussi|également)\b/giu;
+   410→   410→
+   411→   411→// ---------- italiano ----------
+   412→   412→
+   413→   413→export const AI_CLICHES_IT: ClicheRule[] = [
+   414→   414→  { phrase: "nella società odierna", weight: 2, replacements: ["oggi"] },
+   415→   415→  { phrase: "nel mondo di oggi", weight: 2, replacements: ["oggi"] },
+   416→   416→  { phrase: "nel mondo attuale", weight: 2, replacements: ["oggi"] },
+   417→   417→  { phrase: "nell'era digitale", weight: 2, replacements: ["oggi, con internet"] },
+   418→   418→  { phrase: "ai giorni d'oggi", weight: 1.5, replacements: ["oggi"] },
+   419→   419→  { phrase: "è importante notare che", weight: 2.5, replacements: ["va detto che", "occorre dire che"] },
+   420→   420→  { phrase: "è importante sottolineare che", weight: 2.5, replacements: ["va sottolineato che", "bisogna dire che"] },
+   421→   421→  { phrase: "vale la pena notare che", weight: 2, replacements: ["va detto che"] },
+   422→   422→  { phrase: "è doveroso ricordare che", weight: 2, replacements: ["ricordiamo che"] },
+   423→   423→  { phrase: "è fondamentale", weight: 1, replacements: ["serve", "è essenziale"] },
+   424→   424→  { phrase: "è cruciale", weight: 1.5, replacements: ["è decisivo"] },
+   425→   425→  { phrase: "gioca un ruolo cruciale", weight: 2, replacements: ["è decisivo", "conta molto"] },
+   426→   426→  { phrase: "gioca un ruolo fondamentale", weight: 2, replacements: ["è decisivo"] },
+   427→   427→  { phrase: "gioca un ruolo importante", weight: 1.5, replacements: ["conta molto"] },
+   428→   428→  { phrase: "svolge un ruolo cruciale", weight: 2, replacements: ["è decisivo"] },
+   429→   429→  { phrase: "svolge un ruolo fondamentale", weight: 2, replacements: ["è decisivo"] },
+   430→   430→  { phrase: "svolge un ruolo importante", weight: 1.5, replacements: ["conta molto"] },
+   431→   431→  { phrase: "in conclusione", weight: 2, replacements: ["alla fine", "in breve"] },
+   432→   432→  { phrase: "in sintesi", weight: 1.5, replacements: ["in breve"] },
+   433→   433→  { phrase: "in sostanza", weight: 1, replacements: ["in fondo"] },
+   434→   434→  { phrase: "per concludere", weight: 2, replacements: ["per finire"] },
+   435→   435→  { phrase: "in definitiva", weight: 1.5, replacements: ["alla fine"] },
+   436→   436→  { phrase: "tuffiamoci in", weight: 2, replacements: ["entriamo in"] },
+   437→   437→  { phrase: "esploriamo", weight: 1.5, replacements: ["diamo un'occhiata"] },
+   438→   438→  { phrase: "svelare i segreti di", weight: 2, replacements: ["capire"] },
+   439→   439→  { phrase: "sbloccare il potenziale", weight: 2, replacements: ["sfruttare al massimo"] },
+   440→   440→  { phrase: "sfruttare la potenza di", weight: 2, replacements: ["tirare partito da"] },
+   441→   441→  { phrase: "una miriade di", weight: 2, replacements: ["un sacco di"] },
+   442→   442→  { phrase: "una pletora di", weight: 2, replacements: ["un sacco di"] },
+   443→   443→  { phrase: "un'ampia gamma di", weight: 1.5, replacements: ["ogni tipo di"] },
+   444→   444→  { phrase: "un'ampia varietà di", weight: 1.5, replacements: ["ogni tipo di"] },
+   445→   445→  { phrase: "rivoluzionare", weight: 1, replacements: ["stravolgere"] },
+   446→   446→  { phrase: "cambiamento di paradigma", weight: 1.5, replacements: ["cambio di fondo"] },
+   447→   447→  { phrase: "all'avanguardia", weight: 1.5, replacements: ["in prima linea"] },
+   448→   448→  { phrase: "senza soluzione di continuità", weight: 2, replacements: ["senza intoppi"] },
+   449→   449→  { phrase: "le possibilità sono infinite", weight: 2, replacements: ["si può fare molto"] },
+   450→   450→  { phrase: "una testimonianza di", weight: 1.5, replacements: ["una prova di"] },
+   451→   451→  { phrase: "in questo articolo", weight: 1, replacements: ["qui"] },
+   452→   452→  { phrase: "lungo questo articolo", weight: 2, replacements: ["in queste righe"] },
+   453→   453→  { phrase: "va senza dire che", weight: 2, replacements: ["ovviamente"] },
+   454→   454→  { phrase: "fare luce su", weight: 1.5, replacements: ["chiarire"] },
+   455→   455→  { phrase: "aprire la strada a", weight: 1.5, replacements: ["preparare il terreno per"] },
+   456→   456→  { phrase: "approccio olistico", weight: 1.5, replacements: ["visione d'insieme"] },
+   457→   457→  { phrase: "ultimo ma non meno importante", weight: 2, replacements: ["infine"] },
+   458→   458→  { phrase: "nel panorama di", weight: 1.5, replacements: ["nel mondo di"] },
+   459→   459→  { phrase: "è innegabile che", weight: 2, replacements: ["è chiaro che"] },
+   460→   460→  { phrase: "indubbiamente", weight: 1, replacements: ["senza dubbio"] },
+   461→   461→];
+   462→   462→
+   463→   463→export const HUMAN_MARKERS_IT: string[] = [
+   464→   464→  "secondo me", "a dire il vero", "insomma", "dai,", "guarda", "io", "mi",
+   465→   465→  "mio", "mia", "nostra", "ieri", "l'altro giorno", "la settimana scorsa",
+   466→   466→  "sinceramente", "onestamente", "in pratica", "vabbè", "boh", "ehi", "mah,",
+   467→   467→  "tipo", "un po'", "però", "magari", "chissà", "a mio avviso", "ti giuro",
+   468→   468→  "figurati", "mmm", "ehilà", "dai su", "insisto", "ci mancherebbe",
+   469→   469→];
+   470→   470→
+   471→   471→export const SENTENCE_START_CONNECTORS_IT: string[] = [
+   472→   472→  "inoltre", "peraltro", "tuttavia", "comunque", "pertanto", "quindi",
+   473→   473→  "di conseguenza", "infatti", "in primo luogo", "in secondo luogo",
+   474→   474→  "in terzo luogo", "infine", "da un lato", "dall'altro lato",
+   475→   475→  "in particolare", "nello specifico", "nel frattempo", "ciò nondimeno",
+   476→   476→  "ad esempio", "in definitiva", "in sostanza", "analogamente",
+   477→   477→  "al contrario", "per concludere", "in conclusione", "in sintesi",
+   478→   478→  "è importante", "va sottolineato", "occorre", "a questo proposito",
+   479→   479→  "detto questo", "cioè", "ovvero", "in ogni caso",
+   480→   480→];
+   481→   481→
+   482→   482→export const NON_SOLO_IT_REGEX = /non solo\b([^.;!?]{2,120}?)\bma (?:anche|persino)\b/giu;
+   483→   483→
+   484→   484→// ---------- portugués ----------
+   485→   485→
+   486→   486→export const AI_CLICHES_PT: ClicheRule[] = [
+   487→   487→  { phrase: "nos dias de hoje", weight: 1.5, replacements: ["hoje"] },
+   488→   488→  { phrase: "na sociedade atual", weight: 2, replacements: ["hoje"] },
+   489→   489→  { phrase: "no mundo atual", weight: 2, replacements: ["hoje"] },
+   490→   490→  { phrase: "no mundo de hoje", weight: 2, replacements: ["hoje"] },
+   491→   491→  { phrase: "na era digital", weight: 2, replacements: ["hoje, com a internet"] },
+   492→   492→  { phrase: "é importante notar que", weight: 2.5, replacements: ["convém dizer que", "note-se que"] },
+   493→   493→  { phrase: "é importante destacar que", weight: 2.5, replacements: ["convém sublinhar que"] },
+   494→   494→  { phrase: "é importante ressaltar que", weight: 2.5, replacements: ["importa dizer que"] },
+   495→   495→  { phrase: "cabe destacar que", weight: 2, replacements: ["convém sublinhar que"] },
+   496→   496→  { phrase: "cabe ressaltar que", weight: 2, replacements: ["convém notar que"] },
+   497→   497→  { phrase: "vale a pena mencionar", weight: 1.5, replacements: ["merece ser dito"] },
+   498→   498→  { phrase: "é fundamental", weight: 1, replacements: ["é essencial"] },
+   499→   499→  { phrase: "é crucial", weight: 1.5, replacements: ["é decisivo"] },
+   500→   500→  { phrase: "desempenha um papel crucial", weight: 2, replacements: ["é decisivo"] },
+   501→   501→  { phrase: "desempenha um papel fundamental", weight: 2, replacements: ["é decisivo"] },
+   502→   502→  { phrase: "desempenha um papel importante", weight: 1.5, replacements: ["conta muito"] },
+   503→   503→  { phrase: "joga um papel importante", weight: 1.5, replacements: ["conta muito"] },
+   504→   504→  { phrase: "em conclusão", weight: 2, replacements: ["para terminar", "no fim"] },
+   505→   505→  { phrase: "em resumo", weight: 1.5, replacements: ["resumindo"] },
+   506→   506→  { phrase: "em suma", weight: 1.5, replacements: ["resumindo"] },
+   507→   507→  { phrase: "para concluir", weight: 2, replacements: ["para terminar"] },
+   508→   508→  { phrase: "mergulhe em", weight: 2, replacements: ["entre de cheio em"] },
+   509→   509→  { phrase: "mergulhar em", weight: 1.5, replacements: ["entrar em"] },
+   510→   510→  { phrase: "vamos explorar", weight: 2, replacements: ["vamos ver"] },
+   511→   511→  { phrase: "desbloquear o potencial", weight: 2, replacements: ["tirar o máximo partido"] },
+   512→   512→  { phrase: "aproveitar o poder de", weight: 2, replacements: ["tirar partido de"] },
+   513→   513→  { phrase: "uma infinidade de", weight: 2, replacements: ["um monte de"] },
+   514→   514→  { phrase: "uma ampla gama de", weight: 1.5, replacements: ["todo tipo de"] },
+   515→   515→  { phrase: "uma grande variedade de", weight: 1.5, replacements: ["todo tipo de"] },
+   516→   516→  { phrase: "revolucionar", weight: 1, replacements: ["transformar por completo"] },
+   517→   517→  { phrase: "mudança de paradigma", weight: 1.5, replacements: ["mudança de fundo"] },
+   518→   518→  { phrase: "de ponta", weight: 1, replacements: ["mais recente"] },
+   519→   519→  { phrase: "as possibilidades são infinitas", weight: 2, replacements: ["dá para fazer muito"] },
+   520→   520→  { phrase: "um testemunho de", weight: 1.5, replacements: ["uma prova de"] },
+   521→   521→  { phrase: "no coração de", weight: 1, replacements: ["em pleno"] },
+   522→   522→  { phrase: "neste artigo", weight: 1, replacements: ["aqui"] },
+   523→   523→  { phrase: "ao longo deste artigo", weight: 2, replacements: ["nestas linhas"] },
+   524→   524→  { phrase: "sem sombra de dúvidas", weight: 2, replacements: ["sem dúvida"] },
+   525→   525→  { phrase: "é inegável que", weight: 2, replacements: ["é claro que"] },
+   526→   526→  { phrase: "lançar luz sobre", weight: 1.5, replacements: ["esclarecer"] },
+   527→   527→  { phrase: "abrir caminho para", weight: 1.5, replacements: ["preparar o terreno para"] },
+   528→   528→  { phrase: "abordagem holística", weight: 1.5, replacements: ["visão global"] },
+   529→   529→  { phrase: "em última análise", weight: 1.5, replacements: ["no fim das contas"] },
+   530→   530→  { phrase: "não há como negar", weight: 1.5, replacements: ["é claro que"] },
+   531→   531→  { phrase: "de vital importância", weight: 2, replacements: ["muito importante"] },
+   532→   532→  { phrase: "no cenário de", weight: 1.5, replacements: ["no mundo de"] },
+   533→   533→];
+   534→   534→
+   535→   535→export const HUMAN_MARKERS_PT: string[] = [
+   536→   536→  "na minha opinião", "pra ser sincero", "sinceramente", "é que", "bom,",
+   537→   537→  "olha", "né", "tipo", "acho que", "pelo menos", "ontem", "anteontem",
+   538→   538→  "semana passada", "outro dia", "eu", "meu", "minha", "nossa", "a gente",
+   539→   539→  "tá", "tá bom", "puxa", "caramba", "um pouco", "até que", "confesso",
+   540→   540→  "pra mim", "na real", "vou te falar", "pasmem", "imagina", "oba",
+   541→   541→];
+   542→   542→
+   543→   543→export const SENTENCE_START_CONNECTORS_PT: string[] = [
+   544→   544→  "além disso", "ademais", "no entanto", "porém", "todavia", "contudo",
+   545→   545→  "entretanto", "portanto", "por conseguinte", "consequentemente",
+   546→   546→  "em primeiro lugar", "em segundo lugar", "em terceiro lugar", "por fim",
+   547→   547→  "por um lado", "por outro lado", "de fato", "com efeito", "em particular",
+   548→   548→  "nomeadamente", "especificamente", "enquanto isso", "ainda assim",
+   549→   549→  "por exemplo", "em suma", "em síntese", "para concluir", "finalmente",
+   550→   550→  "da mesma forma", "igualmente", "é importante", "cabe destacar",
+   551→   551→  "a esse respeito", "ou seja", "digamos", "aliás",
+   552→   552→];
+   553→   553→
+   554→   554→export const NAO_APENAS_REGEX = /não (?:apenas|somente|só)\b([^.;!?]{2,120}?)\bmas (?:também|como)\b/giu;
+   555→   555→
+   556→   556→// ---------- alemán ----------
+   557→   557→
+   558→   558→export const AI_CLICHES_DE: ClicheRule[] = [
+   559→   559→  { phrase: "in der heutigen Zeit", weight: 2, replacements: ["heutzutage", "heute"] },
+   560→   560→  { phrase: "in der heutigen Welt", weight: 2, replacements: ["heute"] },
+   561→   561→  { phrase: "in der modernen Welt", weight: 2, replacements: ["heute"] },
+   562→   562→  { phrase: "im digitalen Zeitalter", weight: 2, replacements: ["heute, im Internetzeitalter"] },
+   563→   563→  { phrase: "in der heutigen Gesellschaft", weight: 2, replacements: ["heute"] },
+   564→   564→  { phrase: "es ist wichtig zu beachten, dass", weight: 2.5, replacements: ["wichtig ist:", "man sollte wissen:"] },
+   565→   565→  { phrase: "es ist wichtig zu betonen, dass", weight: 2.5, replacements: ["betont werden muss:"] },
+   566→   566→  { phrase: "es ist wichtig hervorzuheben, dass", weight: 2, replacements: ["hervorzuheben ist:"] },
+   567→   567→  { phrase: "es lohnt sich zu erwähnen", weight: 1.5, replacements: ["erwähnenswert ist"] },
+   568→   568→  { phrase: "es ist erwähnenswert, dass", weight: 1.5, replacements: ["erwähnenswert ist:"] },
+   569→   569→  { phrase: "ist von entscheidender Bedeutung", weight: 2.5, replacements: ["entscheidend", "wichtig"] },
+   570→   570→  { phrase: "spielt eine entscheidende Rolle", weight: 2.5, replacements: ["ist entscheidend", "zählt sehr"] },
+   571→   571→  { phrase: "spielt eine wichtige Rolle", weight: 2, replacements: ["zählt viel"] },
+   572→   572→  { phrase: "spielt eine zentrale Rolle", weight: 2, replacements: ["ist zentral"] },
+   573→   573→  { phrase: "Abschließend lässt sich sagen", weight: 2, replacements: ["Alles in allem"] },
+   574→   574→  { phrase: "zusammenfassend lässt sich sagen", weight: 2, replacements: ["kurz gesagt"] },
+   575→   575→  { phrase: "zum Schluss", weight: 1, replacements: ["zum Ende"] },
+   576→   576→  { phrase: "eintauchen in", weight: 1.5, replacements: ["sich stürzen in"] },
+   577→   577→  { phrase: "das volle Potenzial ausschöpfen", weight: 2, replacements: ["das Beste herausholen"] },
+   578→   578→  { phrase: "das Potenzial freisetzen", weight: 2, replacements: ["das Beste rausholen"] },
+   579→   579→  { phrase: "eine Vielzahl von", weight: 1.5, replacements: ["viele", "eine Menge"] },
+   580→   580→  { phrase: "eine breite Palette von", weight: 1.5, replacements: ["allerlei", "viele Arten von"] },
+   581→   581→  { phrase: "eine Fülle von", weight: 1.5, replacements: ["eine Menge"] },
+   582→   582→  { phrase: "revolutionieren", weight: 1, replacements: ["auf den Kopf stellen"] },
+   583→   583→  { phrase: "Paradigmenwechsel", weight: 1.5, replacements: ["grundsätzlicher Wandel"] },
+   584→   584→  { phrase: "auf dem neuesten Stand", weight: 1, replacements: ["modern"] },
+   585→   585→  { phrase: "nahtlos", weight: 1.5, replacements: ["problemlos", "ohne Umwege"] },
+   586→   586→  { phrase: "ganzheitlich", weight: 1.5, replacements: ["umfassend"] },
+   587→   587→  { phrase: "die Möglichkeiten sind endlos", weight: 2, replacements: ["man kann viel machen"] },
+   588→   588→  { phrase: "unendliche Möglichkeiten", weight: 2, replacements: ["viele Möglichkeiten"] },
+   589→   589→  { phrase: "eine glänzende Zukunft", weight: 1.5, replacements: ["die Zukunft sieht gut aus"] },
+   590→   590→  { phrase: "im Herzen von", weight: 1, replacements: ["mitten in"] },
+   591→   591→  { phrase: "in diesem Artikel", weight: 1, replacements: ["hier"] },
+   592→   592→  { phrase: "im Laufe dieses Artikels", weight: 2, replacements: ["in diesen Zeilen"] },
+   593→   593→  { phrase: "es versteht sich von selbst", weight: 2, replacements: ["offensichtlich"] },
+   594→   594→  { phrase: "Licht ins Dunkel bringen", weight: 1.5, replacements: ["Klarheit bringen"] },
+   595→   595→  { phrase: "den Weg ebnen für", weight: 1.5, replacements: ["die Grundlage legen für"] },
+   596→   596→  { phrase: "von größter Bedeutung", weight: 2, replacements: ["sehr wichtig"] },
+   597→   597→  { phrase: "von zentraler Bedeutung", weight: 2, replacements: ["zentral"] },
+   598→   598→  { phrase: "zu guter Letzt", weight: 1.5, replacements: ["zum Schluss"] },
+   599→   599→  { phrase: "in der Landschaft von", weight: 1.5, replacements: ["in der Welt von"] },
+   600→   600→];
+   601→   601→
+   602→   602→export const HUMAN_MARKERS_DE: string[] = [
+   603→   603→  "ich denke", "ich glaube", "ich meine", "ehrlich gesagt", "naja", "also",
+   604→   604→  "eigentlich", "irgendwie", "quasi", "halt", "eben", "gestern", "letzte Woche",
+   605→   605→  "neulich", "kürzlich", "ich", "mir", "mich", "mein", "meine", "uns",
+   606→   606→  "unser", "wahrscheinlich", "zugegeben", "gut,", "schau mal", "ein bisschen",
+   607→   607→  "sowas", "krass", "ach herrje", "na gut", "unter uns", "zugegeben",
+   608→   608→];
+   609→   609→
+   610→   610→export const SENTENCE_START_CONNECTORS_DE: string[] = [
+   611→   611→  "außerdem", "des Weiteren", "ferner", "jedoch", "allerdings", "dennoch",
+   612→   612→  "trotzdem", "deshalb", "daher", "deswegen", "folglich", "somit",
+   613→   613→  "erstens", "zweitens", "drittens", "zuletzt", "abschließend",
+   614→   614→  "einerseits", "andererseits", "insbesondere", "namentlich",
+   615→   615→  "währenddessen", "beispielsweise", "zum Beispiel", "letztlich",
+   616→   616→  "im Wesentlichen", "tatsächlich", "ähnlich", "im Gegensatz dazu",
+   617→   617→  "zusammenfassend", "es ist wichtig", "hervorzuheben ist",
+   618→   618→  "in dieser Hinsicht", "darüber hinaus", "kurz gesagt", "im Grunde",
+   619→   619→];
+   620→   620→
+   621→   621→export const NICHT_NUR_REGEX = /nicht nur\b([^.;!?]{2,120}?)\bsondern auch\b/giu;
+   622→   622→
+   623→   623→// ---------- detección de idioma ----------
+   624→   624→
+   625→   625→const STOPWORDS_BY_LANG: Record<Lang, string[]> = {
+   626→   626→  es: [
+   627→   627→    "el", "los", "las", "que", "del", "pero", "más", "también", "cuando",
+   628→   628→    "porque", "para", "con", "una", "uno", "este", "esta", "eso", "sin",
+   629→   629→    "sobre", "entre", "año", "años", "sus", "ya", "como", "está", "él",
+   630→   630→    "ellos", "nosotros", "muy", "sí", "dos", "hasta", "desde", "todo", "todos",
+   631→   631→  ],
+   632→   632→  en: [
+   633→   633→    "the", "and", "of", "to", "in", "is", "that", "for", "with", "as", "was",
+   634→   634→    "on", "are", "by", "this", "be", "from", "or", "an", "which", "it", "at",
+   635→   635→    "not", "but", "has", "have", "had", "were", "their", "they", "we", "you",
+   636→   636→  ],
+   637→   637→  fr: [
+   638→   638→    "les", "des", "est", "dans", "pour", "qui", "ne", "pas", "sur", "avec",
+   639→   639→    "plus", "être", "cette", "au", "aux", "vous", "tout", "était", "elle",
+   640→   640→    "ils", "elles", "ça", "on", "sont", "leur", "nos", "vos", "comme", "mais",
+   641→   641→    "aussi", "peut", "faire", "dont", "chez", "sans",
+   642→   642→  ],
+   643→   643→  it: [
+   644→   644→    "che", "il", "lo", "gli", "della", "dei", "sono", "anche", "più", "come",
+   645→   645→    "ma", "nella", "questo", "questa", "essere", "hanno", "siamo", "non",
+   646→   646→    "però", "già", "molto", "ogni", "dallo", "nello", "con", "per", "una",
+   647→   647→    "suo", "sua", "quello", "quella", "ciò", "senza", "molto",
+   648→   648→  ],
+   649→   649→  pt: [
+   650→   650→    "não", "os", "as", "dos", "das", "do", "da", "pelo", "pela", "até", "são",
+   651→   651→    "isso", "esse", "essa", "você", "muito", "mas", "também", "quando",
+   652→   652→    "porque", "para", "com", "uma", "um", "mais", "como", "está", "seu",
+   653→   653→    "sua", "pelo", "nos", "pela", "ser", "sem", "muito",
+   654→   654→  ],
+   655→   655→  de: [
+   656→   656→    "der", "die", "das", "und", "ist", "den", "von", "zu", "mit", "sich",
+   657→   657→    "auf", "für", "nicht", "ein", "eine", "als", "auch", "werden", "wird",
+   658→   658→    "oder", "aber", "bei", "um", "haben", "hat", "sind", "über", "nach",
+   659→   659→    "wie", "nur", "noch", "durch", "aus", "dem", "des", "im", "dass",
+   660→   660→    "kann", "wurde", "bei",
+   661→   661→  ],
+   662→   662→};
+   663→   663→
+   664→   664→// Terminaciones muy características de cada idioma (señal fuerte)
+   665→   665→const SUFFIX_HINTS: { re: RegExp; lang: Lang; points: number; cap: number }[] = [
+   666→   666→  { re: /ción\b|ciones\b/g, lang: "es", points: 2, cap: 6 },
+   667→   667→  { re: /ção\b|ções\b/g, lang: "pt", points: 3, cap: 6 },
+   668→   668→  { re: /zione\b|zioni\b/g, lang: "it", points: 3, cap: 6 },
+   669→   669→  { re: /heit\b|keit\b|ungen\b|ung\b/g, lang: "de", points: 2, cap: 6 },
+   670→   670→  { re: /tion\b|tions\b/g, lang: "fr", points: 1, cap: 3 },
+   671→   671→  { re: /tion\b|tions\b/g, lang: "en", points: 1, cap: 3 },
+   672→   672→];
+   673→   673→
+   674→   674→/** Detecta el idioma del texto por frecuencia de palabras funcionales (es|en|fr|it|pt|de) */
+   675→   675→export function detectLanguage(text: string): Lang {
+   676→   676→  const sample = text.slice(0, 4000).toLowerCase();
+   677→   677→  const m = sample.match(/[\p{L}']+/gu) || [];
+   678→   678→  const score: Record<Lang, number> = { es: 0, en: 0, fr: 0, it: 0, pt: 0, de: 0 };
+   679→   679→  for (const w of m) {
+   680→   680→    for (const lang of Object.keys(STOPWORDS_BY_LANG) as Lang[]) {
+   681→   681→      if (STOPWORDS_BY_LANG[lang].includes(w)) score[lang]++;
+   682→   682→    }
+   683→   683→  }
+   684→   684→  for (const hint of SUFFIX_HINTS) {
+   685→   685→    const hits = (sample.match(hint.re) || []).length;
+   686→   686→    if (hits > 0) score[hint.lang] += Math.min(hint.cap, hits * hint.points);
+   687→   687→  }
+   688→   688→  // desempate: diacríticos y signos característicos
+   689→   689→  const count = (re: RegExp) => (sample.match(re) || []).length;
+   690→   690→  score.es += Math.min(6, count(/[ñ¿¡]/g) * 3);
+   691→   691→  score.de += Math.min(6, count(/[äöüß]/g) * 3);
+   692→   692→  score.pt += Math.min(6, count(/[ãõ]/g) * 3);
+   693→   693→  score.fr += Math.min(4, count(/[àèùêâôîœ]/g) * 2);
+   694→   694→  // "è" como palabra suelta ("es" en italiano) es muy italiana
+   695→   695→  score.it += Math.min(3, count(/(^|\s)è(\s|$)/g) * 3);
+   696→   696→  // ganador (prioridad al orden clásico si hay empate)
+   697→   697→  const order: Lang[] = ["es", "en", "fr", "it", "pt", "de"];
+   698→   698→  let best: Lang = "es";
+   699→   699→  let bestScore = -1;
+   700→   700→  for (const lang of order) {
+   701→   701→    if (score[lang] > bestScore) {
+   702→   702→      best = lang;
+   703→   703→      bestScore = score[lang];
+   704→   704→    }
+   705→   705→  }
+   706→   706→  return best;
+   707→   707→}
+   708→   708→
+   709→   709→// ---------- mapas por idioma (detector y humanizador) ----------
+   710→   710→
+   711→   711→export const LANG_NAMES: Record<Lang, string> = {
+   712→   712→  es: "español",
+   713→   713→  en: "inglés",
+   714→   714→  fr: "francés",
+   715→   715→  it: "italiano",
+   716→   716→  pt: "portugués",
+   717→   717→  de: "alemán",
+   718→   718→};
+   719→   719→
+   720→   720→export const CLICHES_BY_LANG: Record<Lang, ClicheRule[]> = {
+   721→   721→  es: AI_CLICHES,
+   722→   722→  en: AI_CLICHES_EN,
+   723→   723→  fr: AI_CLICHES_FR,
+   724→   724→  it: AI_CLICHES_IT,
+   725→   725→  pt: AI_CLICHES_PT,
+   726→   726→  de: AI_CLICHES_DE,
+   727→   727→};
+   728→   728→
+   729→   729→export const HUMAN_MARKERS_BY_LANG: Record<Lang, string[]> = {
+   730→   730→  es: HUMAN_MARKERS,
+   731→   731→  en: HUMAN_MARKERS_EN,
+   732→   732→  fr: HUMAN_MARKERS_FR,
+   733→   733→  it: HUMAN_MARKERS_IT,
+   734→   734→  pt: HUMAN_MARKERS_PT,
+   735→   735→  de: HUMAN_MARKERS_DE,
+   736→   736→};
+   737→   737→
+   738→   738→export const CONNECTORS_BY_LANG: Record<Lang, string[]> = {
+   739→   739→  es: SENTENCE_START_CONNECTORS,
+   740→   740→  en: SENTENCE_START_CONNECTORS_EN,
+   741→   741→  fr: SENTENCE_START_CONNECTORS_FR,
+   742→   742→  it: SENTENCE_START_CONNECTORS_IT,
+   743→   743→  pt: SENTENCE_START_CONNECTORS_PT,
+   744→   744→  de: SENTENCE_START_CONNECTORS_DE,
+   745→   745→};
+   746→   746→
+   747→   747→/** Estructura paralela "no solo X sino también Y" de cada idioma */
+   748→   748→export const STRUCT_REGEX_BY_LANG: Record<Lang, RegExp> = {
+   749→   749→  es: NO_SOLO_REGEX,
+   750→   750→  en: NOT_ONLY_REGEX,
+   751→   751→  fr: NON_SEULEMENT_REGEX,
+   752→   752→  it: NON_SOLO_IT_REGEX,
+   753→   753→  pt: NAO_APENAS_REGEX,
+   754→   754→  de: NICHT_NUR_REGEX,
+   755→   755→};
+   756→   756→
+   757→   757→export const STRUCT_LABEL_BY_LANG: Record<Lang, string> = {
+   758→   758→  es: "no solo … sino también",
+   759→   759→  en: "not only … but also",
+   760→   760→  fr: "non seulement … mais aussi",
+   761→   761→  it: "non solo … ma anche",
+   762→   762→  pt: "não apenas … mas também",
+   763→   763→  de: "nicht nur …, sondern auch",
+   764→   764→};
+   765→   765→
+   766→   766→/** Cola usada al deshacer la estructura paralela: "X" + cola + "Y" */
+   767→   767→export const STRUCT_TAIL_BY_LANG: Record<Lang, string> = {
+   768→   768→  es: ", y también",
+   769→   769→  en: ", and also",
+   770→   770→  fr: ", et aussi",
+   771→   771→  it: ", e anche",
+   772→   772→  pt: ", e também",
+   773→   773→  de: ", und auch",
+   774→   774→};
+   775→   775→

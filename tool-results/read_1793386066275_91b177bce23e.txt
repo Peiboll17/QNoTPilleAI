@@ -1,0 +1,1260 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useRef, useState } from "react";
+     4→import { Button } from "@/components/ui/button";
+     5→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+     6→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+     7→import { Textarea } from "@/components/ui/textarea";
+     8→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+     9→import { Switch } from "@/components/ui/switch";
+    10→import { Badge } from "@/components/ui/badge";
+    11→import { Separator } from "@/components/ui/separator";
+    12→import {
+    13→  AlertTriangle,
+    14→  Check,
+    15→  ClipboardPaste,
+    16→  Copy,
+    17→  Download,
+    18→  FileDown,
+    19→  FileText,
+    20→  FileUp,
+    21→  Layers,
+    22→  Loader2,
+    23→  MessageSquareWarning,
+    24→  PenLine,
+    25→  RefreshCw,
+    26→  ScanSearch,
+    27→  ShieldCheck,
+    28→  Sparkles,
+    29→  Trash2,
+    30→  X,
+    31→} from "lucide-react";
+    32→import type {
+    33→  BatchFileResult,
+    34→  DetectResult,
+    35→  ExtractMeta,
+    36→  HumanizeBatchJobState,
+    37→  HumanizeJobState,
+    38→  HumanizeResponse,
+    39→  Intensity,
+    40→  Tone,
+    41→} from "@/lib/shared-types";
+    42→
+    43→// ---------- utilidades visuales ----------
+    44→
+    45→function scoreHex(score: number): string {
+    46→  if (score < 35) return "#059669";
+    47→  if (score < 65) return "#d97706";
+    48→  return "#dc2626";
+    49→}
+    50→
+    51→function scoreBg(score: number): string {
+    52→  if (score < 35) return "bg-emerald-600";
+    53→  if (score < 65) return "bg-amber-600";
+    54→  return "bg-red-600";
+    55→}
+    56→
+    57→function levelBadgeClass(key: string): string {
+    58→  if (key === "human") return "bg-emerald-100 text-emerald-800 border-emerald-200";
+    59→  if (key === "mixed") return "bg-amber-100 text-amber-800 border-amber-200";
+    60→  return "bg-red-100 text-red-800 border-red-200";
+    61→}
+    62→
+    63→function Gauge({ value, size = 190 }: { value: number; size?: number }) {
+    64→  const r = 70;
+    65→  const c = 2 * Math.PI * r;
+    66→  const color = scoreHex(value);
+    67→  return (
+    68→    <svg width={size} height={size} viewBox="0 0 180 180" role="img" aria-label={`Probabilidad de IA: ${value}%`}>
+    69→      <circle cx="90" cy="90" r={r} stroke="#e8ebe8" strokeWidth="14" fill="none" />
+    70→      <circle
+    71→        cx="90"
+    72→        cy="90"
+    73→        r={r}
+    74→        stroke={color}
+    75→        strokeWidth="14"
+    76→        fill="none"
+    77→        strokeLinecap="round"
+    78→        strokeDasharray={`${(value / 100) * c} ${c}`}
+    79→        transform="rotate(-90 90 90)"
+    80→        style={{ transition: "stroke-dasharray 0.8s ease, stroke 0.8s ease" }}
+    81→      />
+    82→      <text x="90" y="92" textAnchor="middle" fontSize="42" fontWeight="700" fill={color}>
+    83→        {value}%
+    84→      </text>
+    85→      <text x="90" y="118" textAnchor="middle" fontSize="12.5" fill="#6b7280">
+    86→        probabilidad de IA
+    87→      </text>
+    88→    </svg>
+    89→  );
+    90→}
+    91→
+    92→function StatTile({ label, value }: { label: string; value: string }) {
+    93→  return (
+    94→    <div className="rounded-lg border bg-muted/40 px-3 py-2.5 text-center">
+    95→      <div className="text-lg font-semibold leading-tight">{value}</div>
+    96→      <div className="mt-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+    97→    </div>
+    98→  );
+    99→}
+   100→
+   101→// ---------- cliente fetch tolerante ----------
+   102→
+   103→// Parser JSON seguro: si el servidor o un proxy intermedio devuelve HTML,
+   104→// una respuesta vacía o corta la conexión, mostramos un mensaje claro
+   105→// en lugar del error críptico "JSON.parse: unexpected character".
+   106→async function fetchJson<T>(url: string, init: RequestInit, timeoutMs = 60_000): Promise<T> {
+   107→  const ctrl = new AbortController();
+   108→  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+   109→  let res: Response;
+   110→  try {
+   111→    res = await fetch(url, { ...init, signal: ctrl.signal });
+   112→  } catch {
+   113→    clearTimeout(timer);
+   114→    throw new Error(
+   115→      "No se pudo contactar con el servidor o la petición ha tardado demasiado. Comprueba tu conexión e inténtalo de nuevo; si el texto es muy largo, prueba con uno más corto."
+   116→    );
+   117→  }
+   118→  clearTimeout(timer);
+   119→
+   120→  const raw = await res.text().catch(() => "");
+   121→  let data: unknown = null;
+   122→  if (raw) {
+   123→    try {
+   124→      data = JSON.parse(raw);
+   125→    } catch {
+   126→      data = null;
+   127→    }
+   128→  }
+   129→
+   130→  if (data === null || typeof data !== "object") {
+   131→    throw new Error(
+   132→      res.ok
+   133→        ? "El servidor devolvió una respuesta no válida. Inténtalo de nuevo."
+   134→        : `El servidor no ha podido procesar la petición (código ${res.status}). Si el texto es muy largo, prueba con uno más corto o desactiva «Reescritura con IA».`
+   135→    );
+   136→  }
+   137→  if (!res.ok) {
+   138→    const msg = (data as { error?: string }).error;
+   139→    throw new Error(msg || `Error del servidor (código ${res.status}).`);
+   140→  }
+   141→  return data as T;
+   142→}
+   143→
+   144→function IndicatorBar({ label, score, detail }: { label: string; score: number; detail: string }) {
+   145→  return (
+   146→    <div className="space-y-1.5">
+   147→      <div className="flex items-center justify-between gap-3">
+   148→        <span className="text-sm font-medium">{label}</span>
+   149→        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold text-white ${scoreBg(score)}`}>
+   150→          {score}%
+   151→        </span>
+   152→      </div>
+   153→      <div className="h-2 overflow-hidden rounded-full bg-muted">
+   154→        <div
+   155→          className={`h-full rounded-full transition-all duration-700 ${scoreBg(score)}`}
+   156→          style={{ width: `${score}%` }}
+   157→        />
+   158→      </div>
+   159→      <p className="text-xs leading-relaxed text-muted-foreground">{detail}</p>
+   160→    </div>
+   161→  );
+   162→}
+   163→
+   164→// ---------- página ----------
+   165→
+   166→type InputMode = "file" | "paste" | "batch";
+   167→
+   168→interface BatchItem {
+   169→  file: File;
+   170→  status: "pendiente" | "extrayendo" | "listo" | "error";
+   171→  detail: string; // mensaje de estado o error
+   172→  text: string;
+   173→  result?: BatchFileResult;
+   174→}
+   175→
+   176→export default function Home() {
+   177→  const [inputMode, setInputMode] = useState<InputMode>("file");
+   178→  const [fileMeta, setFileMeta] = useState<ExtractMeta | null>(null);
+   179→  const [originalText, setOriginalText] = useState("");
+   180→  const [pasteText, setPasteText] = useState("");
+   181→
+   182→  const [extracting, setExtracting] = useState(false);
+   183→  const [detecting, setDetecting] = useState(false);
+   184→  const [humanizing, setHumanizing] = useState(false);
+   185→  const [hProgress, setHProgress] = useState<{ done: number; total: number } | null>(null);
+   186→  const [reanalyzing, setReanalyzing] = useState(false);
+   187→  const [exporting, setExporting] = useState<string | null>(null);
+   188→
+   189→  const [detection, setDetection] = useState<DetectResult | null>(null);
+   190→  const [humanized, setHumanized] = useState<HumanizeResponse | null>(null);
+   191→  const [humanizedText, setHumanizedText] = useState("");
+   192→  const [afterDetect, setAfterDetect] = useState<DetectResult | null>(null);
+   193→
+   194→  const [intensity, setIntensity] = useState<Intensity>("medium");
+   195→  const [tone, setTone] = useState<Tone>("neutral");
+   196→  const [useLLM, setUseLLM] = useState(true);
+   197→  const [useRules, setUseRules] = useState(true);
+   198→  const [semantic, setSemantic] = useState(true);
+   199→
+   200→  const [error, setError] = useState<string | null>(null);
+   201→  const [copied, setCopied] = useState(false);
+   202→  const [dragging, setDragging] = useState(false);
+   203→
+   204→  const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
+   205→  const [batchStatus, setBatchStatus] = useState<string | null>(null);
+   206→  const [batchRunning, setBatchRunning] = useState(false);
+   207→
+   208→  const analysisRef = useRef<HTMLDivElement>(null);
+   209→  const resultRef = useRef<HTMLDivElement>(null);
+   210→  const fileInputRef = useRef<HTMLInputElement>(null);
+   211→  const batchInputRef = useRef<HTMLInputElement>(null);
+   212→
+   213→  const workingText = inputMode === "file" ? originalText : pasteText;
+   214→  const canAnalyze = workingText.trim().length >= 40 && !detecting;
+   215→
+   216→  const scrollTo = (ref: React.RefObject<HTMLDivElement | null>) =>
+   217→    setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+   218→
+   219→  // ---------- acciones ----------
+   220→
+   221→  const handleFile = useCallback(async (file: File) => {
+   222→    setError(null);
+   223→    setExtracting(true);
+   224→    setDetection(null);
+   225→    setHumanized(null);
+   226→    setAfterDetect(null);
+   227→    try {
+   228→      const fd = new FormData();
+   229→      fd.append("file", file);
+   230→      const data = await fetchJson<{ text: string; meta: ExtractMeta }>(
+   231→        "/api/extract",
+   232→        { method: "POST", body: fd },
+   233→        90_000
+   234→      );
+   235→      setOriginalText(data.text);
+   236→      setFileMeta(data.meta);
+   237→      scrollTo(analysisRef);
+   238→    } catch (e) {
+   239→      setError(e instanceof Error ? e.message : "Error al procesar el archivo.");
+   240→      setFileMeta(null);
+   241→    } finally {
+   242→      setExtracting(false);
+   243→    }
+   244→  }, []);
+   245→
+   246→  const onDrop = (e: React.DragEvent) => {
+   247→    e.preventDefault();
+   248→    setDragging(false);
+   249→    const file = e.dataTransfer.files?.[0];
+   250→    if (file) void handleFile(file);
+   251→  };
+   252→
+   253→  const analyze = async () => {
+   254→    setError(null);
+   255→    setDetecting(true);
+   256→    setHumanized(null);
+   257→    setAfterDetect(null);
+   258→    try {
+   259→      const data = await fetchJson<DetectResult>("/api/detect", {
+   260→        method: "POST",
+   261→        headers: { "Content-Type": "application/json" },
+   262→        body: JSON.stringify({ text: workingText.slice(0, 200000), useAI: semantic }),
+   263→      });
+   264→      setDetection(data);
+   265→      scrollTo(analysisRef);
+   266→    } catch (e) {
+   267→      setError(e instanceof Error ? e.message : "Error al analizar el texto.");
+   268→    } finally {
+   269→      setDetecting(false);
+   270→    }
+   271→  };
+   272→
+   273→  const humanize = async () => {
+   274→    setError(null);
+   275→    setHumanizing(true);
+   276→    setHProgress(null);
+   277→    try {
+   278→      // 1) iniciar el trabajo: el servidor responde al instante con un id.
+   279→      //    La reescritura ocurre en segundo plano; así ninguna petición HTTP
+   280→      //    larga atraviesa el proxy intermedio (que las corta con un 502).
+   281→      const { id } = await fetchJson<{ id: string; status: string }>(
+   282→        "/api/humanize",
+   283→        {
+   284→          method: "POST",
+   285→          headers: { "Content-Type": "application/json" },
+   286→          body: JSON.stringify({
+   287→            text: workingText.slice(0, 200000),
+   288→            intensity,
+   289→            tone,
+   290→            useLLM,
+   291→            useRules,
+   292→          }),
+   293→        },
+   294→        30_000
+   295→      );
+   296→
+   297→      // 2) sondear el estado cada 2 s hasta que termine
+   298→      const started = Date.now();
+   299→      let fallos = 0;
+   300→      while (Date.now() - started < 420_000) {
+   301→        await new Promise((r) => setTimeout(r, 2000));
+   302→        let st: HumanizeJobState;
+   303→        try {
+   304→          st = await fetchJson<HumanizeJobState>(`/api/humanize?id=${encodeURIComponent(id)}`, {}, 20_000);
+   305→          fallos = 0;
+   306→        } catch {
+   307→          // un fallo puntual de red no cancela el trabajo: reintentar
+   308→          fallos++;
+   309→          if (fallos >= 4) {
+   310→            throw new Error(
+   311→              "Se ha perdido la conexión con el servidor mientras se humanizaba el texto. Comprueba tu conexión e inténtalo de nuevo."
+   312→            );
+   313→          }
+   314→          continue;
+   315→        }
+   316→        if (st.status === "processing") {
+   317→          if (st.total > 0) setHProgress({ done: st.progress, total: st.total });
+   318→          continue;
+   319→        }
+   320→        if (st.status === "error") throw new Error(st.error);
+   321→        const data = st.result;
+   322→        setHumanized(data);
+   323→        setHumanizedText(data.text);
+   324→        setAfterDetect(data.after);
+   325→        scrollTo(resultRef);
+   326→        return;
+   327→      }
+   328→      throw new Error(
+   329→        "La reescritura está tardando demasiado. Inténtalo de nuevo; si persiste, prueba con un texto más corto o desactiva «Reescritura con IA»."
+   330→      );
+   331→    } catch (e) {
+   332→      setError(e instanceof Error ? e.message : "Error al humanizar el texto.");
+   333→    } finally {
+   334→      setHumanizing(false);
+   335→      setHProgress(null);
+   336→    }
+   337→  };
+   338→
+   339→  const reanalyze = async () => {
+   340→    setError(null);
+   341→    setReanalyzing(true);
+   342→    try {
+   343→      const data = await fetchJson<DetectResult>("/api/detect", {
+   344→        method: "POST",
+   345→        headers: { "Content-Type": "application/json" },
+   346→        body: JSON.stringify({ text: humanizedText.slice(0, 200000), useAI: semantic }),
+   347→      });
+   348→      setAfterDetect(data);
+   349→    } catch (e) {
+   350→      setError(e instanceof Error ? e.message : "Error al reanalizar.");
+   351→    } finally {
+   352→      setReanalyzing(false);
+   353→    }
+   354→  };
+   355→
+   356→  const download = async (format: "docx" | "pdf" | "txt") => {
+   357→    setError(null);
+   358→    setExporting(format);
+   359→    try {
+   360→      const base = (fileMeta?.fileName || "texto").replace(/\.[A-Za-z0-9]+$/, "") || "texto";
+   361→      const res = await fetch("/api/export", {
+   362→        method: "POST",
+   363→        headers: { "Content-Type": "application/json" },
+   364→        body: JSON.stringify({ text: humanizedText, format, fileName: base }),
+   365→      });
+   366→      if (!res.ok) {
+   367→        const data = await res.json().catch(() => null);
+   368→        throw new Error(data?.error || "No se pudo generar el archivo.");
+   369→      }
+   370→      const blob = await res.blob();
+   371→      const url = URL.createObjectURL(blob);
+   372→      const a = document.createElement("a");
+   373→      a.href = url;
+   374→      a.download = `${base}_humanizado.${format}`;
+   375→      document.body.appendChild(a);
+   376→      a.click();
+   377→      a.remove();
+   378→      URL.revokeObjectURL(url);
+   379→    } catch (e) {
+   380→      setError(e instanceof Error ? e.message : "Error al exportar.");
+   381→    } finally {
+   382→      setExporting(null);
+   383→    }
+   384→  };
+   385→
+   386→  const copyResult = async () => {
+   387→    try {
+   388→      await navigator.clipboard.writeText(humanizedText);
+   389→      setCopied(true);
+   390→      setTimeout(() => setCopied(false), 2000);
+   391→    } catch {
+   392→      setError("No se pudo copiar al portapapeles.");
+   393→    }
+   394→  };
+   395→
+   396→  const resetAll = () => {
+   397→    setOriginalText("");
+   398→    setPasteText("");
+   399→    setFileMeta(null);
+   400→    setDetection(null);
+   401→    setHumanized(null);
+   402→    setHumanizedText("");
+   403→    setAfterDetect(null);
+   404→    setError(null);
+   405→    if (fileInputRef.current) fileInputRef.current.value = "";
+   406→  };
+   407→
+   408→  // ---------- lote ----------
+   409→
+   410→  const addBatchFiles = (list: FileList | File[]) => {
+   411→    const files = Array.from(list).filter((f) => /\.(pdf|doc|docx|txt|md)$/i.test(f.name));
+   412→    if (!files.length) {
+   413→      setError("Formato no admitido en el lote: usa PDF, DOC, DOCX o TXT.");
+   414→      return;
+   415→    }
+   416→    setError(null);
+   417→    setBatchItems((prev) => {
+   418→      const merged = [...prev];
+   419→      for (const f of files) {
+   420→        if (merged.length >= 12) break;
+   421→        if (merged.some((m) => m.file.name === f.name && m.file.size === f.size)) continue;
+   422→        merged.push({ file: f, status: "pendiente", detail: "En espera", text: "" });
+   423→      }
+   424→      return merged;
+   425→    });
+   426→  };
+   427→
+   428→  const removeBatchItem = (idx: number) => {
+   429→    setBatchItems((prev) => prev.filter((_, j) => j !== idx));
+   430→  };
+   431→
+   432→  const applyBatchResults = (results: BatchFileResult[]) => {
+   433→    setBatchItems((prev) =>
+   434→      prev.map((b) => {
+   435→        const r = results.find((x) => x.name === b.file.name);
+   436→        return r ? { ...b, status: "listo" as const, detail: "Humanizado", result: r } : b;
+   437→      })
+   438→    );
+   439→  };
+   440→
+   441→  const processBatch = async () => {
+   442→    if (batchItems.length === 0 || batchRunning) return;
+   443→    setError(null);
+   444→    setBatchRunning(true);
+   445→    try {
+   446→      // 1) extraer el texto de cada archivo (los que ya tienen texto se saltan)
+   447→      const texts: { name: string; text: string }[] = [];
+   448→      let fallas = 0;
+   449→      for (let i = 0; i < batchItems.length; i++) {
+   450→        const it = batchItems[i];
+   451→        if (it.text.trim().length >= 40) {
+   452→          texts.push({ name: it.file.name, text: it.text });
+   453→          continue;
+   454→        }
+   455→        setBatchItems((prev) =>
+   456→          prev.map((b, j) => (j === i ? { ...b, status: "extrayendo", detail: "Extrayendo texto…" } : b))
+   457→        );
+   458→        setBatchStatus(`Extrayendo texto (${i + 1} de ${batchItems.length}): ${it.file.name}`);
+   459→        try {
+   460→          const fd = new FormData();
+   461→          fd.append("file", it.file);
+   462→          const data = await fetchJson<{ text: string }>("/api/extract", { method: "POST", body: fd }, 90_000);
+   463→          texts.push({ name: it.file.name, text: data.text });
+   464→          setBatchItems((prev) =>
+   465→            prev.map((b, j) => (j === i ? { ...b, status: "listo", detail: "Texto extraído", text: data.text } : b))
+   466→          );
+   467→        } catch (e) {
+   468→          fallas++;
+   469→          setBatchItems((prev) =>
+   470→            prev.map((b, j) =>
+   471→              j === i
+   472→                ? { ...b, status: "error", detail: e instanceof Error ? e.message : "No se pudo extraer el texto." }
+   473→                : b
+   474→            )
+   475→          );
+   476→        }
+   477→      }
+   478→      if (texts.length === 0) {
+   479→        throw new Error("Ninguno de los archivos tiene texto utilizable (mínimo ~40 caracteres).");
+   480→      }
+   481→
+   482→      // 2) lanzar el trabajo por lotes en el servidor (responde al instante)
+   483→      setBatchStatus(`Iniciando la reescritura de ${texts.length} archivo(s)…`);
+   484→      const { id } = await fetchJson<{ id: string }>(
+   485→        "/api/humanize-batch",
+   486→        {
+   487→          method: "POST",
+   488→          headers: { "Content-Type": "application/json" },
+   489→          body: JSON.stringify({ files: texts, intensity, tone, useLLM, useRules }),
+   490→        },
+   491→        30_000
+   492→      );
+   493→
+   494→      // 3) sondear el estado cada 3 s (máx. 1 h)
+   495→      const started = Date.now();
+   496→      let fallos = 0;
+   497→      while (Date.now() - started < 3_600_000) {
+   498→        await new Promise((r) => setTimeout(r, 3000));
+   499→        let st: HumanizeBatchJobState;
+   500→        try {
+   501→          st = await fetchJson<HumanizeBatchJobState>(
+   502→            `/api/humanize-batch?id=${encodeURIComponent(id)}`,
+   503→            {},
+   504→            20_000
+   505→          );
+   506→          fallos = 0;
+   507→        } catch {
+   508→          fallos++;
+   509→          if (fallos >= 4) {
+   510→            throw new Error("Se ha perdido la conexión con el servidor durante el lote. Inténtalo de nuevo.");
+   511→          }
+   512→          continue;
+   513→        }
+   514→        if (st.status === "processing") {
+   515→          setBatchStatus(
+   516→            `Archivo ${Math.min(st.filesDone + 1, st.filesTotal)} de ${st.filesTotal}: ${st.currentFile}` +
+   517→              (st.fileTotal > 0 ? ` · fragmento ${st.fileProgress}/${st.fileTotal}` : "")
+   518→          );
+   519→          continue;
+   520→        }
+   521→        if (st.status === "error") {
+   522→          if (st.results?.length) applyBatchResults(st.results);
+   523→          throw new Error(st.error);
+   524→        }
+   525→        applyBatchResults(st.results);
+   526→        setBatchStatus(`Lote completado: ${st.results.length} archivo(s) humanizados.`);
+   527→        if (fallas > 0) {
+   528→          setError(`${fallas} archivo(s) no pudieron leerse y se han omitido.`);
+   529→        }
+   530→        return;
+   531→      }
+   532→      throw new Error("El lote está tardando demasiado. Reinténtalo con menos archivos.");
+   533→    } catch (e) {
+   534→      setError(e instanceof Error ? e.message : "Error al procesar el lote.");
+   535→      setBatchStatus(null);
+   536→    } finally {
+   537→      setBatchRunning(false);
+   538→    }
+   539→  };
+   540→
+   541→  const downloadBlob = (blob: Blob, name: string) => {
+   542→    const url = URL.createObjectURL(blob);
+   543→    const a = document.createElement("a");
+   544→    a.href = url;
+   545→    a.download = name;
+   546→    document.body.appendChild(a);
+   547→    a.click();
+   548→    a.remove();
+   549→    URL.revokeObjectURL(url);
+   550→  };
+   551→
+   552→  const downloadBatchFile = async (item: BatchItem, format: "docx" | "pdf" | "txt") => {
+   553→    if (!item.result) return;
+   554→    setError(null);
+   555→    setExporting(`batch:${item.file.name}:${format}`);
+   556→    try {
+   557→      const base = item.file.name.replace(/\.[A-Za-z0-9]+$/, "") || "texto";
+   558→      const res = await fetch("/api/export", {
+   559→        method: "POST",
+   560→        headers: { "Content-Type": "application/json" },
+   561→        body: JSON.stringify({ text: item.result.text, format, fileName: base }),
+   562→      });
+   563→      if (!res.ok) {
+   564→        const d = await res.json().catch(() => null);
+   565→        throw new Error(d?.error || "No se pudo generar el archivo.");
+   566→      }
+   567→      downloadBlob(await res.blob(), `${base}_humanizado.${format}`);
+   568→    } catch (e) {
+   569→      setError(e instanceof Error ? e.message : "Error al exportar.");
+   570→    } finally {
+   571→      setExporting(null);
+   572→    }
+   573→  };
+   574→
+   575→  const downloadBatchZip = async (format: "docx" | "pdf" | "txt") => {
+   576→    const ready = batchItems.filter((b) => b.result);
+   577→    if (!ready.length) return;
+   578→    setError(null);
+   579→    setExporting("zip");
+   580→    try {
+   581→      const res = await fetch("/api/export-batch", {
+   582→        method: "POST",
+   583→        headers: { "Content-Type": "application/json" },
+   584→        body: JSON.stringify({
+   585→          files: ready.map((b) => ({ name: b.file.name, text: b.result!.text, format })),
+   586→        }),
+   587→      });
+   588→      if (!res.ok) {
+   589→        const d = await res.json().catch(() => null);
+   590→        throw new Error(d?.error || "No se pudo generar el ZIP.");
+   591→      }
+   592→      downloadBlob(await res.blob(), `vozhumana-lote-${format}.zip`);
+   593→    } catch (e) {
+   594→      setError(e instanceof Error ? e.message : "Error al exportar el ZIP.");
+   595→    } finally {
+   596→      setExporting(null);
+   597→    }
+   598→  };
+   599→
+   600→  // ---------- render ----------
+   601→
+   602→  return (
+   603→    <div className="flex min-h-screen flex-col">
+   604→      {/* Cabecera */}
+   605→      <header className="sticky top-0 z-40 border-b bg-card/85 backdrop-blur">
+   606→        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4 sm:px-6">
+   607→          <div className="flex items-center gap-2.5">
+   608→            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+   609→              <PenLine className="h-5 w-5" />
+   610→            </div>
+   611→            <div>
+   612→              <div className="text-base font-bold leading-tight">VozHumana</div>
+   613→              <div className="text-[11px] text-muted-foreground leading-tight">
+   614→                Humanizador y detector de texto IA
+   615→              </div>
+   616→            </div>
+   617→          </div>
+   618→          <Badge variant="outline" className="gap-1.5 border-emerald-300 bg-emerald-50 text-emerald-800">
+   619→            <ShieldCheck className="h-3.5 w-3.5" />
+   620→            Metadatos limpios
+   621→          </Badge>
+   622→        </div>
+   623→      </header>
+   624→
+   625→      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
+   626→        {/* Hero */}
+   627→        <section className="mb-8 text-center">
+   628→          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+   629→            Humaniza texto generado por IA
+   630→          </h1>
+   631→          <p className="mx-auto mt-3 max-w-2xl text-muted-foreground">
+   632→            Sube un archivo <strong>PDF, DOC o DOCX</strong>, comprueba si parece escrito por una
+   633→            inteligencia artificial y reescríbelo con estilo humano natural. Después descárgalo en
+   634→            el formato que necesites.
+   635→          </p>
+   636→          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+   637→            <Badge variant="secondary">Heurísticas de estilo + análisis semántico con IA</Badge>
+   638→            <Badge variant="secondary">Reescritura con IA + reglas</Badge>
+   639→            <Badge variant="secondary">PDF · DOC · DOCX · TXT</Badge>
+   640→          </div>
+   641→        </section>
+   642→
+   643→        {error && (
+   644→          <div className="mb-6 flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+   645→            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+   646→            <span>{error}</span>
+   647→            <button onClick={() => setError(null)} className="ml-auto shrink-0 text-red-600 hover:text-red-800" aria-label="Cerrar aviso">
+   648→              <X className="h-4 w-4" />
+   649→            </button>
+   650→          </div>
+   651→        )}
+   652→
+   653→        {/* Paso 1: entrada */}
+   654→        <Card className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+   655→          <CardHeader>
+   656→            <CardTitle className="flex items-center gap-2 text-xl">
+   657→              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">1</span>
+   658→              Añade tu texto
+   659→            </CardTitle>
+   660→            <CardDescription>
+   661→              Sube un documento o pega el texto directamente. El texto nunca se almacena: solo se procesa en memoria.
+   662→            </CardDescription>
+   663→          </CardHeader>
+   664→          <CardContent>
+   665→            <Tabs value={inputMode} onValueChange={(v) => setInputMode(v as InputMode)}>
+   666→              <TabsList className="mb-4">
+   667→                <TabsTrigger value="file" className="gap-1.5">
+   668→                  <FileUp className="h-4 w-4" /> Subir archivo
+   669→                </TabsTrigger>
+   670→                <TabsTrigger value="paste" className="gap-1.5">
+   671→                  <ClipboardPaste className="h-4 w-4" /> Pegar texto
+   672→                </TabsTrigger>
+   673→                <TabsTrigger value="batch" className="gap-1.5">
+   674→                  <Layers className="h-4 w-4" /> En lote
+   675→                </TabsTrigger>
+   676→              </TabsList>
+   677→
+   678→              <TabsContent value="file">
+   679→                <input
+   680→                  ref={fileInputRef}
+   681→                  type="file"
+   682→                  accept=".pdf,.doc,.docx,.txt,.md"
+   683→                  className="hidden"
+   684→                  onChange={(e) => {
+   685→                    const f = e.target.files?.[0];
+   686→                    if (f) void handleFile(f);
+   687→                  }}
+   688→                />
+   689→                {!fileMeta ? (
+   690→                  <button
+   691→                    type="button"
+   692→                    onClick={() => fileInputRef.current?.click()}
+   693→                    onDragOver={(e) => {
+   694→                      e.preventDefault();
+   695→                      setDragging(true);
+   696→                    }}
+   697→                    onDragLeave={() => setDragging(false)}
+   698→                    onDrop={onDrop}
+   699→                    className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-12 text-center transition-colors ${
+   700→                      dragging ? "border-primary bg-accent" : "border-border hover:border-primary/50 hover:bg-muted/50"
+   701→                    }`}
+   702→                  >
+   703→                    {extracting ? (
+   704→                      <Loader2 className="h-10 w-10 animate-spin text-primary" />
+   705→                    ) : (
+   706→                      <FileUp className="h-10 w-10 text-primary" />
+   707→                    )}
+   708→                    <div>
+   709→                      <p className="font-medium">
+   710→                        {extracting ? "Extrayendo texto…" : "Arrastra un archivo aquí o haz clic para elegirlo"}
+   711→                      </p>
+   712→                      <p className="mt-1 text-sm text-muted-foreground">
+   713→                        PDF, DOC, DOCX o TXT · máximo 25 MB
+   714→                      </p>
+   715→                    </div>
+   716→                  </button>
+   717→                ) : (
+   718→                  <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-muted/40 px-4 py-3">
+   719→                    <FileText className="h-8 w-8 shrink-0 text-primary" />
+   720→                    <div className="min-w-0 flex-1">
+   721→                      <p className="truncate text-sm font-medium">{fileMeta.fileName}</p>
+   722→                      <p className="text-xs text-muted-foreground">
+   723→                        {fileMeta.kind.toUpperCase()} · {fileMeta.words.toLocaleString("es-ES")} palabras ·{" "}
+   724→                        {fileMeta.chars.toLocaleString("es-ES")} caracteres
+   725→                      </p>
+   726→                    </div>
+   727→                    <Button variant="outline" size="sm" onClick={resetAll} className="gap-1.5">
+   728→                      <Trash2 className="h-3.5 w-3.5" /> Quitar
+   729→                    </Button>
+   730→                  </div>
+   731→                )}
+   732→                {fileMeta && (
+   733→                  <Textarea
+   734→                    className="mt-4 min-h-40 max-h-72 overflow-y-auto font-mono text-sm"
+   735→                    value={originalText}
+   736→                    onChange={(e) => {
+   737→                      setOriginalText(e.target.value);
+   738→                      setDetection(null);
+   739→                      setHumanized(null);
+   740→                    }}
+   741→                    aria-label="Texto extraído del documento"
+   742→                  />
+   743→                )}
+   744→              </TabsContent>
+   745→
+   746→              <TabsContent value="paste">
+   747→                <Textarea
+   748→                  className="min-h-52"
+   749→                  placeholder="Pega aquí el texto que quieres analizar y humanizar…"
+   750→                  value={pasteText}
+   751→                  onChange={(e) => {
+   752→                    setPasteText(e.target.value);
+   753→                    setDetection(null);
+   754→                    setHumanized(null);
+   755→                  }}
+   756→                  aria-label="Texto pegado"
+   757→                />
+   758→                <p className="mt-2 text-xs text-muted-foreground">
+   759→                  {pasteText.trim() ? `${pasteText.trim().split(/\s+/).length.toLocaleString("es-ES")} palabras` : "Espera un resultado mejor con 100 palabras o más."}
+   760→                </p>
+   761→              </TabsContent>
+   762→
+   763→              <TabsContent value="batch">
+   764→                <input
+   765→                  ref={batchInputRef}
+   766→                  type="file"
+   767→                  multiple
+   768→                  accept=".pdf,.doc,.docx,.txt,.md"
+   769→                  className="hidden"
+   770→                  onChange={(e) => {
+   771→                    if (e.target.files?.length) addBatchFiles(e.target.files);
+   772→                    if (batchInputRef.current) batchInputRef.current.value = "";
+   773→                  }}
+   774→                />
+   775→                <button
+   776→                  type="button"
+   777→                  onClick={() => batchInputRef.current?.click()}
+   778→                  onDragOver={(e) => {
+   779→                    e.preventDefault();
+   780→                    setDragging(true);
+   781→                  }}
+   782→                  onDragLeave={() => setDragging(false)}
+   783→                  onDrop={(e) => {
+   784→                    e.preventDefault();
+   785→                    setDragging(false);
+   786→                    if (e.dataTransfer.files?.length) addBatchFiles(e.dataTransfer.files);
+   787→                  }}
+   788→                  disabled={batchRunning}
+   789→                  className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors disabled:opacity-60 ${
+   790→                    dragging ? "border-primary bg-accent" : "border-border hover:border-primary/50 hover:bg-muted/50"
+   791→                  }`}
+   792→                >
+   793→                  <Layers className="h-10 w-10 text-primary" />
+   794→                  <div>
+   795→                    <p className="font-medium">Arrastra varios archivos o haz clic para elegirlos</p>
+   796→                    <p className="mt-1 text-sm text-muted-foreground">
+   797→                      PDF, DOC, DOCX o TXT · hasta 12 archivos · se procesan uno a uno con las mismas opciones
+   798→                    </p>
+   799→                  </div>
+   800→                </button>
+   801→
+   802→                {batchItems.length > 0 && (
+   803→                  <div className="mt-4 space-y-2">
+   804→                    {batchItems.map((b, i) => (
+   805→                      <div key={`${b.file.name}-${i}`} className="flex flex-wrap items-center gap-3 rounded-xl border bg-muted/30 px-3 py-2.5">
+   806→                        {b.status === "extrayendo" || (batchRunning && b.status === "pendiente") ? (
+   807→                          <Loader2 className="h-6 w-6 shrink-0 animate-spin text-primary" />
+   808→                        ) : b.status === "error" ? (
+   809→                          <AlertTriangle className="h-6 w-6 shrink-0 text-red-600" />
+   810→                        ) : b.result ? (
+   811→                          <Check className="h-6 w-6 shrink-0 text-emerald-600" />
+   812→                        ) : (
+   813→                          <FileText className="h-6 w-6 shrink-0 text-muted-foreground" />
+   814→                        )}
+   815→                        <div className="min-w-0 flex-1">
+   816→                          <p className="truncate text-sm font-medium">{b.file.name}</p>
+   817→                          <p className="text-xs text-muted-foreground">
+   818→                            {(b.file.size / 1024).toFixed(0)} KB · {b.detail}
+   819→                          </p>
+   820→                        </div>
+   821→                        {b.result && (
+   822→                          <>
+   823→                            <Badge variant="outline" className="gap-1">
+   824→                              antes {b.result.before.score}% → ahora {b.result.after.score}%
+   825→                            </Badge>
+   826→                            <span className="text-xs text-muted-foreground">{b.result.lang === "en" ? "inglés" : "español"}</span>
+   827→                            <div className="flex gap-1">
+   828→                              {(["docx", "pdf", "txt"] as const).map((fmt) => (
+   829→                                <Button
+   830→                                  key={fmt}
+   831→                                  variant="outline"
+   832→                                  size="sm"
+   833→                                  className="h-7 px-2 text-xs"
+   834→                                  onClick={() => void downloadBatchFile(b, fmt)}
+   835→                                  disabled={exporting !== null}
+   836→                                >
+   837→                                  {exporting === `batch:${b.file.name}:${fmt}` ? (
+   838→                                    <Loader2 className="h-3 w-3 animate-spin" />
+   839→                                  ) : (
+   840→                                    <Download className="h-3 w-3" />
+   841→                                  )}
+   842→                                  {fmt.toUpperCase()}
+   843→                                </Button>
+   844→                              ))}
+   845→                            </div>
+   846→                          </>
+   847→                        )}
+   848→                        <Button
+   849→                          variant="ghost"
+   850→                          size="sm"
+   851→                          className="h-7 px-2 text-muted-foreground"
+   852→                          onClick={() => removeBatchItem(i)}
+   853→                          disabled={batchRunning}
+   854→                          aria-label={`Quitar ${b.file.name}`}
+   855→                        >
+   856→                          <X className="h-4 w-4" />
+   857→                        </Button>
+   858→                      </div>
+   859→                    ))}
+   860→                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+   861→                      <Button variant="outline" size="sm" onClick={() => setBatchItems([])} disabled={batchRunning} className="gap-1.5">
+   862→                        <Trash2 className="h-3.5 w-3.5" /> Vaciar lista
+   863→                      </Button>
+   864→                      <Button onClick={processBatch} disabled={batchRunning || batchItems.length === 0} className="gap-2">
+   865→                        {batchRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+   866→                        {batchRunning ? "Procesando lote…" : `Procesar lote (${batchItems.length})`}
+   867→                      </Button>
+   868→                    </div>
+   869→                  </div>
+   870→                )}
+   871→
+   872→                {batchStatus && (
+   873→                  <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+   874→                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> {batchStatus}
+   875→                  </p>
+   876→                )}
+   877→
+   878→                {batchItems.some((b) => b.result) && !batchRunning && (
+   879→                  <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+   880→                    <span className="mr-auto text-xs text-muted-foreground">Descargar todo en ZIP:</span>
+   881→                    {(["docx", "pdf", "txt"] as const).map((fmt) => (
+   882→                      <Button
+   883→                        key={fmt}
+   884→                        variant="outline"
+   885→                        size="sm"
+   886→                        className="gap-1.5"
+   887→                        onClick={() => void downloadBatchZip(fmt)}
+   888→                        disabled={exporting !== null}
+   889→                      >
+   890→                        {exporting === "zip" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5" />}
+   891→                        {fmt.toUpperCase()}
+   892→                      </Button>
+   893→                    ))}
+   894→                  </div>
+   895→                )}
+   896→              </TabsContent>
+   897→            </Tabs>
+   898→
+   899→            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+   900→              <div className="flex flex-1 flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2">
+   901→                <div className="min-w-0">
+   902→                  <p className="text-sm font-medium">Análisis semántico con IA</p>
+   903→                  <p className="text-xs text-muted-foreground">
+   904→                    Un modelo de lenguaje evalúa previsibilidad, uniformidad y voz. Más preciso, tarda unos segundos más.
+   905→                  </p>
+   906→                </div>
+   907→                <Switch checked={semantic} onCheckedChange={setSemantic} aria-label="Análisis semántico con IA" />
+   908→              </div>
+   909→              <Button onClick={analyze} disabled={!canAnalyze} className="gap-2">
+   910→                {detecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
+   911→                {detecting ? "Analizando…" : "Analizar texto"}
+   912→              </Button>
+   913→            </div>
+   914→          </CardContent>
+   915→        </Card>
+   916→
+   917→        {/* Paso 2: detección */}
+   918→        <div ref={analysisRef} className="scroll-mt-24">
+   919→          {detection && (
+   920→            <Card className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+   921→              <CardHeader>
+   922→                <CardTitle className="flex items-center gap-2 text-xl">
+   923→                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">2</span>
+   924→                  Resultado de la detección
+   925→                </CardTitle>
+   926→                <CardDescription>{detection.summary}</CardDescription>
+   927→              </CardHeader>
+   928→              <CardContent className="space-y-6">
+   929→                <div className="grid gap-6 md:grid-cols-[220px_1fr]">
+   930→                  <div className="flex flex-col items-center gap-3">
+   931→                    <Gauge value={detection.score} />
+   932→                    <Badge variant="outline" className={`px-3 py-1 text-sm font-semibold ${levelBadgeClass(detection.levelKey)}`}>
+   933→                      {detection.level}
+   934→                    </Badge>
+   935→                    {detection.semantic === false && (
+   936→                      <p className="max-w-56 text-center text-[11px] leading-snug text-muted-foreground">
+   937→                        El análisis semántico no estuvo disponible en este momento; resultado basado solo en las heurísticas de estilo.
+   938→                      </p>
+   939→                    )}
+   940→                  </div>
+   941→                  <div className="space-y-4">
+   942→                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+   943→                      <StatTile label="Palabras" value={detection.stats.words.toLocaleString("es-ES")} />
+   944→                      <StatTile label="Frases" value={String(detection.stats.sentences)} />
+   945→                      <StatTile label="Párrafos" value={String(detection.stats.paragraphs)} />
+   946→                      <StatTile label="Palabras/frase" value={String(detection.stats.avgSentence)} />
+   947→                      <StatTile label="Variabilidad" value={`${detection.stats.sentenceVariance}%`} />
+   948→                    </div>
+   949→                    <Separator />
+   950→                    <div className="grid gap-4 sm:grid-cols-2">
+   951→                      {detection.indicators.map((ind) => (
+   952→                        <IndicatorBar key={ind.key} label={ind.label} score={ind.score} detail={ind.detail} />
+   953→                      ))}
+   954→                    </div>
+   955→                  </div>
+   956→                </div>
+   957→
+   958→                {(detection.flagged.length > 0 || detection.clichesFound.length > 0) && (
+   959→                  <div className="grid gap-4 lg:grid-cols-2">
+   960→                    {detection.clichesFound.length > 0 && (
+   961→                      <div className="rounded-lg border bg-muted/30 p-4">
+   962→                        <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+   963→                          <MessageSquareWarning className="h-4 w-4 text-amber-600" />
+   964→                          Frases hechas detectadas
+   965→                        </h4>
+   966→                        <div className="flex max-h-44 flex-wrap gap-2 overflow-y-auto">
+   967→                          {detection.clichesFound.map((c) => (
+   968→                            <Badge key={c.phrase} variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
+   969→                              «{c.phrase}» ×{c.count}
+   970→                            </Badge>
+   971→                          ))}
+   972→                        </div>
+   973→                      </div>
+   974→                    )}
+   975→                    {detection.flagged.length > 0 && (
+   976→                      <div className="rounded-lg border bg-muted/30 p-4">
+   977→                        <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+   978→                          <ScanSearch className="h-4 w-4 text-primary" />
+   979→                          Frases sospechosas
+   980→                        </h4>
+   981→                        <ul className="max-h-44 space-y-2 overflow-y-auto pr-1">
+   982→                          {detection.flagged.map((f, i) => (
+   983→                            <li key={i} className="text-xs leading-relaxed">
+   984→                              <span className="font-medium text-foreground">“{f.sentence}”</span>
+   985→                              <span className="ml-1 text-muted-foreground">— {f.reason}</span>
+   986→                            </li>
+   987→                          ))}
+   988→                        </ul>
+   989→                      </div>
+   990→                    )}
+   991→                  </div>
+   992→                )}
+   993→              </CardContent>
+   994→            </Card>
+   995→          )}
+   996→        </div>
+   997→
+   998→        {/* Paso 3: humanizar */}
+   999→        <div>
+  1000→          {detection && (
+  1001→            <Card className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+  1002→              <CardHeader>
+  1003→                <CardTitle className="flex items-center gap-2 text-xl">
+  1004→                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">3</span>
+  1005→                  Humanizar el texto
+  1006→                </CardTitle>
+  1007→                <CardDescription>
+  1008→                  Reescribe el texto con ritmo, vocabulario y estructura de escritura humana, y limpia
+  1009→                  las huellas típicas de IA.
+  1010→                </CardDescription>
+  1011→              </CardHeader>
+  1012→              <CardContent className="space-y-5">
+  1013→                <div>
+  1014→                  <p className="mb-2 text-sm font-medium">Intensidad de la reescritura</p>
+  1015→                  <div className="grid gap-2 sm:grid-cols-3">
+  1016→                    {(
+  1017→                      [
+  1018→                        { v: "light", t: "Ligera", d: "Pule el ritmo y quita frases hechas. Conserva casi todo el original." },
+  1019→                        { v: "medium", t: "Media", d: "Reescribe cada frase con otras palabras manteniendo el sentido." },
+  1020→                        { v: "deep", t: "Profunda", d: "Reescritura libre: reordena, fusiona y divide frases. Máxima naturalidad." },
+  1021→                      ] as const
+  1022→                    ).map((o) => (
+  1023→                      <button
+  1024→                        key={o.v}
+  1025→                        type="button"
+  1026→                        onClick={() => setIntensity(o.v)}
+  1027→                        className={`rounded-xl border p-3 text-left transition-all ${
+  1028→                          intensity === o.v
+  1029→                            ? "border-primary bg-accent ring-1 ring-primary"
+  1030→                            : "hover:border-primary/40 hover:bg-muted/50"
+  1031→                        }`}
+  1032→                        aria-pressed={intensity === o.v}
+  1033→                      >
+  1034→                        <span className="block text-sm font-semibold">{o.t}</span>
+  1035→                        <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{o.d}</span>
+  1036→                      </button>
+  1037→                    ))}
+  1038→                  </div>
+  1039→                </div>
+  1040→
+  1041→                <div className="grid gap-4 sm:grid-cols-2">
+  1042→                  <div>
+  1043→                    <p className="mb-2 text-sm font-medium">Tono del texto final</p>
+  1044→                    <Select value={tone} onValueChange={(v) => setTone(v as Tone)}>
+  1045→                      <SelectTrigger aria-label="Tono">
+  1046→                        <SelectValue />
+  1047→                      </SelectTrigger>
+  1048→                      <SelectContent>
+  1049→                        <SelectItem value="neutral">Neutro y claro</SelectItem>
+  1050→                        <SelectItem value="profesional">Profesional</SelectItem>
+  1051→                        <SelectItem value="academico">Académico</SelectItem>
+  1052→                        <SelectItem value="cercano">Cercano y conversacional</SelectItem>
+  1053→                        <SelectItem value="divulgativo">Divulgativo</SelectItem>
+  1054→                        <SelectItem value="marketing">Marketing y comercial</SelectItem>
+  1055→                        <SelectItem value="tecnico">Técnico</SelectItem>
+  1056→                        <SelectItem value="juridico">Jurídico y formal</SelectItem>
+  1057→                      </SelectContent>
+  1058→                    </Select>
+  1059→                  </div>
+  1060→                  <div className="space-y-3">
+  1061→                    <div className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
+  1062→                      <div>
+  1063→                        <p className="text-sm font-medium">Reescritura con IA</p>
+  1064→                        <p className="text-xs text-muted-foreground">Reescribe el texto con un modelo lingüístico.</p>
+  1065→                      </div>
+  1066→                      <Switch checked={useLLM} onCheckedChange={setUseLLM} aria-label="Reescritura con IA" />
+  1067→                    </div>
+  1068→                    <div className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
+  1069→                      <div>
+  1070→                        <p className="text-sm font-medium">Limpieza de frases hechas</p>
+  1071→                        <p className="text-xs text-muted-foreground">Sustituye muletillas típicas de IA por alternativas naturales.</p>
+  1072→                      </div>
+  1073→                      <Switch checked={useRules} onCheckedChange={setUseRules} aria-label="Limpieza de frases hechas" />
+  1074→                    </div>
+  1075→                  </div>
+  1076→                </div>
+  1077→
+  1078→                <div className="flex flex-col items-end gap-3">
+  1079→                  {humanizing && (
+  1080→                    <p className="text-xs text-muted-foreground">
+  1081→                      {hProgress && hProgress.total > 0
+  1082→                        ? `Reescribiendo el texto… fragmento ${hProgress.done} de ${hProgress.total}.`
+  1083→                        : "Preparando la reescritura…"}
+  1084→                    </p>
+  1085→                  )}
+  1086→                  {!humanizing && workingText.trim().length > 40000 && (
+  1087→                    <p className="text-xs text-muted-foreground">
+  1088→                      Tu texto es largo ({workingText.length.toLocaleString("es-ES")} caracteres): el
+  1089→                      proceso puede tardar más de un minuto. Verás el progreso fragmento a fragmento.
+  1090→                    </p>
+  1091→                  )}
+  1092→                  <Button onClick={humanize} disabled={humanizing} size="lg" className="gap-2">
+  1093→                    {humanizing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
+  1094→                    {humanizing ? "Humanizando…" : "Humanizar texto"}
+  1095→                  </Button>
+  1096→                </div>
+  1097→
+  1098→                {humanized?.warnings && humanized.warnings.length > 0 && (
+  1099→                  <div className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+  1100→                    {humanized.warnings.map((w, i) => (
+  1101→                      <p key={i} className="flex items-start gap-2">
+  1102→                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {w}
+  1103→                      </p>
+  1104→                    ))}
+  1105→                  </div>
+  1106→                )}
+  1107→              </CardContent>
+  1108→            </Card>
+  1109→          )}
+  1110→        </div>
+  1111→
+  1112→        {/* Paso 4: resultado */}
+  1113→        <div ref={resultRef} className="scroll-mt-24">
+  1114→          {humanized && (
+  1115→            <Card className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+  1116→              <CardHeader>
+  1117→                <CardTitle className="flex items-center gap-2 text-xl">
+  1118→                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">4</span>
+  1119→                  Texto humanizado
+  1120→                </CardTitle>
+  1121→                <CardDescription>
+  1122→                  Compara el resultado, edítalo si quieres y descárgalo en el formato que necesites.
+  1123→                </CardDescription>
+  1124→              </CardHeader>
+  1125→              <CardContent className="space-y-6">
+  1126→                {/* Comparativa de puntuaciones */}
+  1127→                {afterDetect && (
+  1128→                  <div className="flex flex-wrap items-center justify-center gap-4 rounded-xl border bg-muted/30 p-5 sm:justify-between sm:px-8">
+  1129→                    <div className="text-center">
+  1130→                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Antes</p>
+  1131→                      <p className="text-3xl font-bold" style={{ color: scoreHex(detection?.score ?? 0) }}>
+  1132→                        {detection?.score ?? "—"}%
+  1133→                      </p>
+  1134→                      <p className="text-xs text-muted-foreground">probabilidad IA</p>
+  1135→                    </div>
+  1136→                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
+  1137→                      <RefreshCw className="h-5 w-5 rotate-90 text-primary" />
+  1138→                    </div>
+  1139→                    <div className="text-center">
+  1140→                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Después</p>
+  1141→                      <p className="text-3xl font-bold" style={{ color: scoreHex(afterDetect.score) }}>
+  1142→                        {afterDetect.score}%
+  1143→                      </p>
+  1144→                      <Badge variant="outline" className={`mt-1 ${levelBadgeClass(afterDetect.levelKey)}`}>
+  1145→                        {afterDetect.level}
+  1146→                      </Badge>
+  1147→                    </div>
+  1148→                    <div className="w-full sm:w-auto">
+  1149→                      <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+  1150→                        <span>Reducción estimada</span>
+  1151→                        <span className="font-semibold text-emerald-700">
+  1152→                          −{Math.max(0, (detection?.score ?? 0) - afterDetect.score)} puntos
+  1153→                        </span>
+  1154→                      </div>
+  1155→                      <div className="h-2 w-56 overflow-hidden rounded-full bg-muted">
+  1156→                        <div
+  1157→                          className="h-full rounded-full bg-emerald-600 transition-all duration-700"
+  1158→                          style={{
+  1159→                            width: `${Math.min(
+  1160→                              100,
+  1161→                              Math.round(
+  1162→                                (Math.max(0, (detection?.score ?? 0) - afterDetect.score) /
+  1163→                                  Math.max(1, detection?.score ?? 1)) *
+  1164→                                  100
+  1165→                              )
+  1166→                            )}%`,
+  1167→                          }}
+  1168→                        />
+  1169→                      </div>
+  1170→                    </div>
+  1171→                  </div>
+  1172→                )}
+  1173→
+  1174→                {/* Textos */}
+  1175→                <Tabs defaultValue="humanized">
+  1176→                  <TabsList>
+  1177→                    <TabsTrigger value="humanized">Texto humanizado</TabsTrigger>
+  1178→                    <TabsTrigger value="original">Original</TabsTrigger>
+  1179→                  </TabsList>
+  1180→                  <TabsContent value="humanized" className="mt-3 space-y-3">
+  1181→                    <Textarea
+  1182→                      className="min-h-64 font-mono text-sm leading-relaxed"
+  1183→                      value={humanizedText}
+  1184→                      onChange={(e) => setHumanizedText(e.target.value)}
+  1185→                      aria-label="Texto humanizado editable"
+  1186→                    />
+  1187→                    <div className="flex flex-wrap items-center gap-2">
+  1188→                      <span className="mr-auto text-xs text-muted-foreground">
+  1189→                        {humanizedText.trim() ? `${humanizedText.trim().split(/\s+/).length.toLocaleString("es-ES")} palabras` : "0 palabras"}
+  1190→                        {humanized.mode === "llm" && " · reescrito con IA"}
+  1191→                        {humanized.mode === "mixed" && " · IA + reglas de limpieza"}
+  1192→                        {humanized.mode === "rules" && " · reglas de limpieza"}
+  1193→                      </span>
+  1194→                      <Button variant="outline" size="sm" onClick={copyResult} className="gap-1.5">
+  1195→                        {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+  1196→                        {copied ? "Copiado" : "Copiar"}
+  1197→                      </Button>
+  1198→                      <Button variant="outline" size="sm" onClick={reanalyze} disabled={reanalyzing} className="gap-1.5">
+  1199→                        {reanalyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+  1200→                        Reanalizar
+  1201→                      </Button>
+  1202→                    </div>
+  1203→                  </TabsContent>
+  1204→                  <TabsContent value="original" className="mt-3">
+  1205→                    <div className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-4 text-sm leading-relaxed text-muted-foreground">
+  1206→                      {workingText}
+  1207→                    </div>
+  1208→                  </TabsContent>
+  1209→                </Tabs>
+  1210→
+  1211→                {/* Descargas */}
+  1212→                <Separator />
+  1213→                <div>
+  1214→                  <div className="mb-3 flex items-start gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+  1215→                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+  1216→                    <p>
+  1217→                      <strong>Archivos generados desde cero:</strong> el documento exportado no conserva
+  1218→                      metadatos del original (autor, programa, historial de revisiones ni marcas de
+  1219→                      herramientas de IA). Se crea limpio, como si lo hubieras escrito tú.
+  1220→                    </p>
+  1221→                  </div>
+  1222→                  <div className="flex flex-wrap gap-2">
+  1223→                    <Button onClick={() => download("docx")} disabled={exporting !== null} className="gap-2">
+  1224→                      {exporting === "docx" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+  1225→                      Descargar DOCX
+  1226→                    </Button>
+  1227→                    <Button onClick={() => download("pdf")} disabled={exporting !== null} variant="outline" className="gap-2">
+  1228→                      {exporting === "pdf" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+  1229→                      Descargar PDF
+  1230→                    </Button>
+  1231→                    <Button onClick={() => download("txt")} disabled={exporting !== null} variant="outline" className="gap-2">
+  1232→                      {exporting === "txt" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+  1233→                      Descargar TXT
+  1234→                    </Button>
+  1235→                  </div>
+  1236→                </div>
+  1237→              </CardContent>
+  1238→            </Card>
+  1239→          )}
+  1240→        </div>
+  1241→      </main>
+  1242→
+  1243→      {/* Pie */}
+  1244→      <footer className="mt-auto border-t bg-card">
+  1245→        <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+  1246→          <p className="text-xs leading-relaxed text-muted-foreground">
+  1247→            <strong className="text-foreground">Uso responsable:</strong> el análisis de detección es una
+  1248→            estimación que combina heurísticas de estilo (ritmo, muletillas, estructura) y, si lo activas,
+  1249→            un análisis semántico con un modelo de lenguaje; no equivale a un veredicto de ningún detector
+  1250→            comercial, y ningún método puede garantizar un resultado concreto frente a todas las
+  1251→            herramientas existentes (los detectores comerciales también discrepan entre sí y dan falsos
+  1252→            positivos). Usa esta aplicación para mejorar la naturalidad de tus textos y respeta siempre las
+  1253→            normas de tu centro, empresa o plataforma. Los textos se procesan en memoria y no se almacenan.
+  1254→          </p>
+  1255→        </div>
+  1256→      </footer>
+  1257→    </div>
+  1258→  );
+  1259→}
+  1260→

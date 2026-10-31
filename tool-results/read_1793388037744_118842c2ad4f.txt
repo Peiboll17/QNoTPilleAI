@@ -1,0 +1,802 @@
+    65→  if (score < 35) return "bg-emerald-600";
+    66→  if (score < 65) return "bg-amber-600";
+    67→  return "bg-red-600";
+    68→}
+    69→
+    70→function levelBadgeClass(key: string): string {
+    71→  if (key === "human") return "bg-emerald-100 text-emerald-800 border-emerald-200";
+    72→  if (key === "mixed") return "bg-amber-100 text-amber-800 border-amber-200";
+    73→  return "bg-red-100 text-red-800 border-red-200";
+    74→}
+    75→
+    76→function Gauge({ value, size = 190 }: { value: number; size?: number }) {
+    77→  const r = 70;
+    78→  const c = 2 * Math.PI * r;
+    79→  const color = scoreHex(value);
+    80→  return (
+    81→    <svg width={size} height={size} viewBox="0 0 180 180" role="img" aria-label={`Probabilidad de IA: ${value}%`}>
+    82→      <circle cx="90" cy="90" r={r} stroke="#e8ebe8" strokeWidth="14" fill="none" />
+    83→      <circle
+    84→        cx="90"
+    85→        cy="90"
+    86→        r={r}
+    87→        stroke={color}
+    88→        strokeWidth="14"
+    89→        fill="none"
+    90→        strokeLinecap="round"
+    91→        strokeDasharray={`${(value / 100) * c} ${c}`}
+    92→        transform="rotate(-90 90 90)"
+    93→        style={{ transition: "stroke-dasharray 0.8s ease, stroke 0.8s ease" }}
+    94→      />
+    95→      <text x="90" y="92" textAnchor="middle" fontSize="42" fontWeight="700" fill={color}>
+    96→        {value}%
+    97→      </text>
+    98→      <text x="90" y="118" textAnchor="middle" fontSize="12.5" fill="#6b7280">
+    99→        probabilidad de IA
+   100→      </text>
+   101→    </svg>
+   102→  );
+   103→}
+   104→
+   105→function StatTile({ label, value }: { label: string; value: string }) {
+   106→  return (
+   107→    <div className="rounded-lg border bg-muted/40 px-3 py-2.5 text-center">
+   108→      <div className="text-lg font-semibold leading-tight">{value}</div>
+   109→      <div className="mt-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+   110→    </div>
+   111→  );
+   112→}
+   113→
+   114→// ---------- cliente fetch tolerante ----------
+   115→
+   116→// Parser JSON seguro: si el servidor o un proxy intermedio devuelve HTML,
+   117→// una respuesta vacía o corta la conexión, mostramos un mensaje claro
+   118→// en lugar del error críptico "JSON.parse: unexpected character".
+   119→async function fetchJson<T>(url: string, init: RequestInit, timeoutMs = 60_000): Promise<T> {
+   120→  const ctrl = new AbortController();
+   121→  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+   122→  let res: Response;
+   123→  try {
+   124→    res = await fetch(url, { ...init, signal: ctrl.signal });
+   125→  } catch {
+   126→    clearTimeout(timer);
+   127→    throw new Error(
+   128→      "No se pudo contactar con el servidor o la petición ha tardado demasiado. Comprueba tu conexión e inténtalo de nuevo; si el texto es muy largo, prueba con uno más corto."
+   129→    );
+   130→  }
+   131→  clearTimeout(timer);
+   132→
+   133→  const raw = await res.text().catch(() => "");
+   134→  let data: unknown = null;
+   135→  if (raw) {
+   136→    try {
+   137→      data = JSON.parse(raw);
+   138→    } catch {
+   139→      data = null;
+   140→    }
+   141→  }
+   142→
+   143→  if (data === null || typeof data !== "object") {
+   144→    throw new Error(
+   145→      res.ok
+   146→        ? "El servidor devolvió una respuesta no válida. Inténtalo de nuevo."
+   147→        : `El servidor no ha podido procesar la petición (código ${res.status}). Si el texto es muy largo, prueba con uno más corto o desactiva «Reescritura con IA».`
+   148→    );
+   149→  }
+   150→  if (!res.ok) {
+   151→    const msg = (data as { error?: string }).error;
+   152→    throw new Error(msg || `Error del servidor (código ${res.status}).`);
+   153→  }
+   154→  return data as T;
+   155→}
+   156→
+   157→function IndicatorBar({ label, score, detail }: { label: string; score: number; detail: string }) {
+   158→  return (
+   159→    <div className="space-y-1.5">
+   160→      <div className="flex items-center justify-between gap-3">
+   161→        <span className="text-sm font-medium">{label}</span>
+   162→        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold text-white ${scoreBg(score)}`}>
+   163→          {score}%
+   164→        </span>
+   165→      </div>
+   166→      <div className="h-2 overflow-hidden rounded-full bg-muted">
+   167→        <div
+   168→          className={`h-full rounded-full transition-all duration-700 ${scoreBg(score)}`}
+   169→          style={{ width: `${score}%` }}
+   170→        />
+   171→      </div>
+   172→      <p className="text-xs leading-relaxed text-muted-foreground">{detail}</p>
+   173→    </div>
+   174→  );
+   175→}
+   176→
+   177→// ---------- página ----------
+   178→
+   179→type InputMode = "file" | "paste" | "batch";
+   180→
+   181→interface BatchItem {
+   182→  file: File | null; // null = texto pegado manualmente (no es un archivo)
+   183→  label: string; // nombre visible y base del nombre de archivo exportado
+   184→  status: "pendiente" | "extrayendo" | "listo" | "error";
+   185→  detail: string; // mensaje de estado o error
+   186→  text: string;
+   187→  result?: BatchFileResult;
+   188→}
+   189→
+   190→export default function Home() {
+   191→  const [inputMode, setInputMode] = useState<InputMode>("file");
+   192→  const [fileMeta, setFileMeta] = useState<ExtractMeta | null>(null);
+   193→  const [originalText, setOriginalText] = useState("");
+   194→  const [pasteText, setPasteText] = useState("");
+   195→
+   196→  const [extracting, setExtracting] = useState(false);
+   197→  const [detecting, setDetecting] = useState(false);
+   198→  const [humanizing, setHumanizing] = useState(false);
+   199→  const [hProgress, setHProgress] = useState<{ done: number; total: number } | null>(null);
+   200→  const [reanalyzing, setReanalyzing] = useState(false);
+   201→  const [exporting, setExporting] = useState<string | null>(null);
+   202→
+   203→  const [detection, setDetection] = useState<DetectResult | null>(null);
+   204→  const [humanized, setHumanized] = useState<HumanizeResponse | null>(null);
+   205→  const [humanizedText, setHumanizedText] = useState("");
+   206→  const [afterDetect, setAfterDetect] = useState<DetectResult | null>(null);
+   207→
+   208→  const [intensity, setIntensity] = useState<Intensity>("medium");
+   209→  const [tone, setTone] = useState<Tone>("neutral");
+   210→  const [useLLM, setUseLLM] = useState(true);
+   211→  const [useRules, setUseRules] = useState(true);
+   212→  const [semantic, setSemantic] = useState(true);
+   213→
+   214→  const [error, setError] = useState<string | null>(null);
+   215→  const [copied, setCopied] = useState(false);
+   216→  const [dragging, setDragging] = useState(false);
+   217→
+   218→  const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
+   219→  const [batchStatus, setBatchStatus] = useState<string | null>(null);
+   220→  const [batchRunning, setBatchRunning] = useState(false);
+   221→  const [batchPasteText, setBatchPasteText] = useState("");
+   222→  const [batchPasteLabel, setBatchPasteLabel] = useState("");
+   223→  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+   224→  const [editLabel, setEditLabel] = useState("");
+   225→  const [editText, setEditText] = useState("");
+   226→
+   227→  const analysisRef = useRef<HTMLDivElement>(null);
+   228→  const resultRef = useRef<HTMLDivElement>(null);
+   229→  const fileInputRef = useRef<HTMLInputElement>(null);
+   230→  const batchInputRef = useRef<HTMLInputElement>(null);
+   231→
+   232→  const workingText = inputMode === "file" ? originalText : pasteText;
+   233→  const canAnalyze = workingText.trim().length >= 40 && !detecting;
+   234→
+   235→  const scrollTo = (ref: React.RefObject<HTMLDivElement | null>) =>
+   236→    setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+   237→
+   238→  // ---------- acciones ----------
+   239→
+   240→  const handleFile = useCallback(async (file: File) => {
+   241→    setError(null);
+   242→    setExtracting(true);
+   243→    setDetection(null);
+   244→    setHumanized(null);
+   245→    setAfterDetect(null);
+   246→    try {
+   247→      const fd = new FormData();
+   248→      fd.append("file", file);
+   249→      const data = await fetchJson<{ text: string; meta: ExtractMeta }>(
+   250→        "/api/extract",
+   251→        { method: "POST", body: fd },
+   252→        90_000
+   253→      );
+   254→      setOriginalText(data.text);
+   255→      setFileMeta(data.meta);
+   256→      scrollTo(analysisRef);
+   257→    } catch (e) {
+   258→      setError(e instanceof Error ? e.message : "Error al procesar el archivo.");
+   259→      setFileMeta(null);
+   260→    } finally {
+   261→      setExtracting(false);
+   262→    }
+   263→  }, []);
+   264→
+   265→  const onDrop = (e: React.DragEvent) => {
+   266→    e.preventDefault();
+   267→    setDragging(false);
+   268→    const file = e.dataTransfer.files?.[0];
+   269→    if (file) void handleFile(file);
+   270→  };
+   271→
+   272→  const analyze = async () => {
+   273→    setError(null);
+   274→    setDetecting(true);
+   275→    setHumanized(null);
+   276→    setAfterDetect(null);
+   277→    try {
+   278→      const data = await fetchJson<DetectResult>("/api/detect", {
+   279→        method: "POST",
+   280→        headers: { "Content-Type": "application/json" },
+   281→        body: JSON.stringify({ text: workingText.slice(0, 200000), useAI: semantic }),
+   282→      });
+   283→      setDetection(data);
+   284→      scrollTo(analysisRef);
+   285→    } catch (e) {
+   286→      setError(e instanceof Error ? e.message : "Error al analizar el texto.");
+   287→    } finally {
+   288→      setDetecting(false);
+   289→    }
+   290→  };
+   291→
+   292→  const humanize = async () => {
+   293→    setError(null);
+   294→    setHumanizing(true);
+   295→    setHProgress(null);
+   296→    try {
+   297→      // 1) iniciar el trabajo: el servidor responde al instante con un id.
+   298→      //    La reescritura ocurre en segundo plano; así ninguna petición HTTP
+   299→      //    larga atraviesa el proxy intermedio (que las corta con un 502).
+   300→      const { id } = await fetchJson<{ id: string; status: string }>(
+   301→        "/api/humanize",
+   302→        {
+   303→          method: "POST",
+   304→          headers: { "Content-Type": "application/json" },
+   305→          body: JSON.stringify({
+   306→            text: workingText.slice(0, 200000),
+   307→            intensity,
+   308→            tone,
+   309→            useLLM,
+   310→            useRules,
+   311→          }),
+   312→        },
+   313→        30_000
+   314→      );
+   315→
+   316→      // 2) sondear el estado cada 2 s hasta que termine
+   317→      const started = Date.now();
+   318→      let fallos = 0;
+   319→      while (Date.now() - started < 420_000) {
+   320→        await new Promise((r) => setTimeout(r, 2000));
+   321→        let st: HumanizeJobState;
+   322→        try {
+   323→          st = await fetchJson<HumanizeJobState>(`/api/humanize?id=${encodeURIComponent(id)}`, {}, 20_000);
+   324→          fallos = 0;
+   325→        } catch {
+   326→          // un fallo puntual de red no cancela el trabajo: reintentar
+   327→          fallos++;
+   328→          if (fallos >= 4) {
+   329→            throw new Error(
+   330→              "Se ha perdido la conexión con el servidor mientras se humanizaba el texto. Comprueba tu conexión e inténtalo de nuevo."
+   331→            );
+   332→          }
+   333→          continue;
+   334→        }
+   335→        if (st.status === "processing") {
+   336→          if (st.total > 0) setHProgress({ done: st.progress, total: st.total });
+   337→          continue;
+   338→        }
+   339→        if (st.status === "error") throw new Error(st.error);
+   340→        const data = st.result;
+   341→        setHumanized(data);
+   342→        setHumanizedText(data.text);
+   343→        setAfterDetect(data.after);
+   344→        scrollTo(resultRef);
+   345→        return;
+   346→      }
+   347→      throw new Error(
+   348→        "La reescritura está tardando demasiado. Inténtalo de nuevo; si persiste, prueba con un texto más corto o desactiva «Reescritura con IA»."
+   349→      );
+   350→    } catch (e) {
+   351→      setError(e instanceof Error ? e.message : "Error al humanizar el texto.");
+   352→    } finally {
+   353→      setHumanizing(false);
+   354→      setHProgress(null);
+   355→    }
+   356→  };
+   357→
+   358→  const reanalyze = async () => {
+   359→    setError(null);
+   360→    setReanalyzing(true);
+   361→    try {
+   362→      const data = await fetchJson<DetectResult>("/api/detect", {
+   363→        method: "POST",
+   364→        headers: { "Content-Type": "application/json" },
+   365→        body: JSON.stringify({ text: humanizedText.slice(0, 200000), useAI: semantic }),
+   366→      });
+   367→      setAfterDetect(data);
+   368→    } catch (e) {
+   369→      setError(e instanceof Error ? e.message : "Error al reanalizar.");
+   370→    } finally {
+   371→      setReanalyzing(false);
+   372→    }
+   373→  };
+   374→
+   375→  const download = async (format: "docx" | "pdf" | "txt") => {
+   376→    setError(null);
+   377→    setExporting(format);
+   378→    try {
+   379→      const base = (fileMeta?.fileName || "texto").replace(/\.[A-Za-z0-9]+$/, "") || "texto";
+   380→      const res = await fetch("/api/export", {
+   381→        method: "POST",
+   382→        headers: { "Content-Type": "application/json" },
+   383→        body: JSON.stringify({ text: humanizedText, format, fileName: base }),
+   384→      });
+   385→      if (!res.ok) {
+   386→        const data = await res.json().catch(() => null);
+   387→        throw new Error(data?.error || "No se pudo generar el archivo.");
+   388→      }
+   389→      const blob = await res.blob();
+   390→      const url = URL.createObjectURL(blob);
+   391→      const a = document.createElement("a");
+   392→      a.href = url;
+   393→      a.download = `${base}_humanizado.${format}`;
+   394→      document.body.appendChild(a);
+   395→      a.click();
+   396→      a.remove();
+   397→      URL.revokeObjectURL(url);
+   398→    } catch (e) {
+   399→      setError(e instanceof Error ? e.message : "Error al exportar.");
+   400→    } finally {
+   401→      setExporting(null);
+   402→    }
+   403→  };
+   404→
+   405→  const copyResult = async () => {
+   406→    try {
+   407→      await navigator.clipboard.writeText(humanizedText);
+   408→      setCopied(true);
+   409→      setTimeout(() => setCopied(false), 2000);
+   410→    } catch {
+   411→      setError("No se pudo copiar al portapapeles.");
+   412→    }
+   413→  };
+   414→
+   415→  const resetAll = () => {
+   416→    setOriginalText("");
+   417→    setPasteText("");
+   418→    setFileMeta(null);
+   419→    setDetection(null);
+   420→    setHumanized(null);
+   421→    setHumanizedText("");
+   422→    setAfterDetect(null);
+   423→    setError(null);
+   424→    if (fileInputRef.current) fileInputRef.current.value = "";
+   425→  };
+   426→
+   427→  // ---------- lote ----------
+   428→
+   429→  const addBatchFiles = (list: FileList | File[]) => {
+   430→    const files = Array.from(list).filter((f) => /\.(pdf|doc|docx|txt|md)$/i.test(f.name));
+   431→    if (!files.length) {
+   432→      setError("Formato no admitido en el lote: usa PDF, DOC, DOCX o TXT.");
+   433→      return;
+   434→    }
+   435→    setError(null);
+   436→    setBatchItems((prev) => {
+   437→      const merged = [...prev];
+   438→      for (const f of files) {
+   439→        if (merged.length >= 12) break;
+   440→        if (merged.some((m) => m.file?.name === f.name && m.file?.size === f.size)) continue;
+   441→        merged.push({ file: f, label: f.name, status: "pendiente", detail: "En espera", text: "" });
+   442→      }
+   443→      return merged;
+   444→    });
+   445→  };
+   446→
+   447→  const removeBatchItem = (idx: number) => {
+   448→    setBatchItems((prev) => prev.filter((_, j) => j !== idx));
+   449→  };
+   450→
+   451→  // Añadir un texto pegado al lote, con un nombre único y seguro como nombre de archivo
+   452→  const addBatchPaste = () => {
+   453→    const t = batchPasteText.trim();
+   454→    if (t.length < 40) {
+   455→      setError("El texto pegado es demasiado corto (mínimo ~40 caracteres).");
+   456→      return;
+   457→    }
+   458→    if (batchItems.length >= 12) {
+   459→      setError("Máximo 12 elementos por lote.");
+   460→      return;
+   461→    }
+   462→    const raw = batchPasteLabel
+   463→      .trim()
+   464→      .replace(/[\\/:*?"<>|]+/g, " ")
+   465→      .replace(/\s+/g, " ")
+   466→      .trim()
+   467→      .slice(0, 60);
+   468→    const taken = new Set(batchItems.map((b) => b.label.toLowerCase()));
+   469→    let label: string;
+   470→    if (raw) {
+   471→      label = raw;
+   472→      let k = 2;
+   473→      while (taken.has(label.toLowerCase())) {
+   474→        label = `${raw} (${k})`;
+   475→        k++;
+   476→      }
+   477→    } else {
+   478→      let k = 1;
+   479→      do {
+   480→        label = `Texto ${batchItems.length + k}`;
+   481→        k++;
+   482→      } while (taken.has(label.toLowerCase()));
+   483→    }
+   484→    setError(null);
+   485→    setBatchItems((prev) => [...prev, { file: null, label, status: "pendiente", detail: "En espera", text: t }]);
+   486→    setBatchPasteText("");
+   487→    setBatchPasteLabel("");
+   488→  };
+   489→
+   490→  // ---------- edición de un texto pegado ya añadido ----------
+   491→
+   492→  const startEditItem = (idx: number) => {
+   493→    const it = batchItems[idx];
+   494→    if (!it || it.file || batchRunning) return;
+   495→    setError(null);
+   496→    setEditingIdx(idx);
+   497→    setEditLabel(it.label);
+   498→    setEditText(it.text);
+   499→  };
+   500→
+   501→  const cancelEditItem = () => {
+   502→    setEditingIdx(null);
+   503→    setEditLabel("");
+   504→    setEditText("");
+   505→  };
+   506→
+   507→  const saveEditItem = () => {
+   508→    if (editingIdx === null) return;
+   509→    const t = editText.trim();
+   510→    if (t.length < 40) {
+   511→      setError("El texto editado es demasiado corto (mínimo ~40 caracteres).");
+   512→      return;
+   513→    }
+   514→    const current = batchItems[editingIdx];
+   515→    if (!current) return;
+   516→    const raw = editLabel
+   517→      .trim()
+   518→      .replace(/[\\/:*?"<>|]+/g, " ")
+   519→      .replace(/\s+/g, " ")
+   520→      .trim()
+   521→      .slice(0, 60);
+   522→    const base = raw || current.label;
+   523→    const taken = new Set(
+   524→      batchItems.map((b, j) => (j === editingIdx ? "" : b.label.toLowerCase())).filter(Boolean)
+   525→    );
+   526→    let label = base;
+   527→    let k = 2;
+   528→    while (taken.has(label.toLowerCase())) {
+   529→      label = `${base} (${k})`;
+   530→      k++;
+   531→    }
+   532→    setBatchItems((prev) =>
+   533→      prev.map((b, j) =>
+   534→        j === editingIdx
+   535→          ? { ...b, label, text: t, status: "pendiente" as const, detail: "Editado, sin procesar", result: undefined }
+   536→          : b
+   537→      )
+   538→    );
+   539→    cancelEditItem();
+   540→  };
+   541→
+   542→  const applyBatchResults = (results: BatchFileResult[]) => {
+   543→    setBatchItems((prev) =>
+   544→      prev.map((b) => {
+   545→        const r = results.find((x) => x.name === b.label);
+   546→        return r ? { ...b, status: "listo" as const, detail: "Humanizado", result: r } : b;
+   547→      })
+   548→    );
+   549→  };
+   550→
+   551→  const processBatch = async () => {
+   552→    if (batchItems.length === 0 || batchRunning) return;
+   553→    setError(null);
+   554→    setBatchRunning(true);
+   555→    try {
+   556→      // 1) extraer el texto de cada archivo (los que ya tienen texto se saltan)
+   557→      const texts: { name: string; text: string }[] = [];
+   558→      let fallas = 0;
+   559→      for (let i = 0; i < batchItems.length; i++) {
+   560→        const it = batchItems[i];
+   561→        if (it.text.trim().length >= 40) {
+   562→          texts.push({ name: it.label, text: it.text });
+   563→          continue;
+   564→        }
+   565→        if (!it.file) {
+   566→          // texto pegado demasiado corto (no debería ocurrir, pero por seguridad)
+   567→          fallas++;
+   568→          setBatchItems((prev) =>
+   569→            prev.map((b, j) =>
+   570→              j === i ? { ...b, status: "error", detail: "Texto demasiado corto (mínimo ~40 caracteres)." } : b
+   571→            )
+   572→          );
+   573→          continue;
+   574→        }
+   575→        setBatchItems((prev) =>
+   576→          prev.map((b, j) => (j === i ? { ...b, status: "extrayendo", detail: "Extrayendo texto…" } : b))
+   577→        );
+   578→        setBatchStatus(`Extrayendo texto (${i + 1} de ${batchItems.length}): ${it.label}`);
+   579→        try {
+   580→          const fd = new FormData();
+   581→          fd.append("file", it.file);
+   582→          const data = await fetchJson<{ text: string }>("/api/extract", { method: "POST", body: fd }, 90_000);
+   583→          texts.push({ name: it.label, text: data.text });
+   584→          setBatchItems((prev) =>
+   585→            prev.map((b, j) => (j === i ? { ...b, status: "listo", detail: "Texto extraído", text: data.text } : b))
+   586→          );
+   587→        } catch (e) {
+   588→          fallas++;
+   589→          setBatchItems((prev) =>
+   590→            prev.map((b, j) =>
+   591→              j === i
+   592→                ? { ...b, status: "error", detail: e instanceof Error ? e.message : "No se pudo extraer el texto." }
+   593→                : b
+   594→            )
+   595→          );
+   596→        }
+   597→      }
+   598→      if (texts.length === 0) {
+   599→        throw new Error("Ninguno de los archivos tiene texto utilizable (mínimo ~40 caracteres).");
+   600→      }
+   601→
+   602→      // 2) lanzar el trabajo por lotes en el servidor (responde al instante)
+   603→      setBatchStatus(`Iniciando la reescritura de ${texts.length} elemento(s)…`);
+   604→      const { id } = await fetchJson<{ id: string }>(
+   605→        "/api/humanize-batch",
+   606→        {
+   607→          method: "POST",
+   608→          headers: { "Content-Type": "application/json" },
+   609→          body: JSON.stringify({ files: texts, intensity, tone, useLLM, useRules }),
+   610→        },
+   611→        30_000
+   612→      );
+   613→
+   614→      // 3) sondear el estado cada 3 s (máx. 1 h)
+   615→      const started = Date.now();
+   616→      let fallos = 0;
+   617→      while (Date.now() - started < 3_600_000) {
+   618→        await new Promise((r) => setTimeout(r, 3000));
+   619→        let st: HumanizeBatchJobState;
+   620→        try {
+   621→          st = await fetchJson<HumanizeBatchJobState>(
+   622→            `/api/humanize-batch?id=${encodeURIComponent(id)}`,
+   623→            {},
+   624→            20_000
+   625→          );
+   626→          fallos = 0;
+   627→        } catch {
+   628→          fallos++;
+   629→          if (fallos >= 4) {
+   630→            throw new Error("Se ha perdido la conexión con el servidor durante el lote. Inténtalo de nuevo.");
+   631→          }
+   632→          continue;
+   633→        }
+   634→        if (st.status === "processing") {
+   635→          setBatchStatus(
+   636→            `Archivo ${Math.min(st.filesDone + 1, st.filesTotal)} de ${st.filesTotal}: ${st.currentFile}` +
+   637→              (st.fileTotal > 0 ? ` · fragmento ${st.fileProgress}/${st.fileTotal}` : "")
+   638→          );
+   639→          continue;
+   640→        }
+   641→        if (st.status === "error") {
+   642→          if (st.results?.length) applyBatchResults(st.results);
+   643→          throw new Error(st.error);
+   644→        }
+   645→        applyBatchResults(st.results);
+   646→        setBatchStatus(`Lote completado: ${st.results.length} elemento(s) humanizados.`);
+   647→        if (fallas > 0) {
+   648→          setError(`${fallas} elemento(s) no pudieron procesarse y se han omitido.`);
+   649→        }
+   650→        return;
+   651→      }
+   652→      throw new Error("El lote está tardando demasiado. Reinténtalo con menos archivos.");
+   653→    } catch (e) {
+   654→      setError(e instanceof Error ? e.message : "Error al procesar el lote.");
+   655→      setBatchStatus(null);
+   656→    } finally {
+   657→      setBatchRunning(false);
+   658→    }
+   659→  };
+   660→
+   661→  const downloadBlob = (blob: Blob, name: string) => {
+   662→    const url = URL.createObjectURL(blob);
+   663→    const a = document.createElement("a");
+   664→    a.href = url;
+   665→    a.download = name;
+   666→    document.body.appendChild(a);
+   667→    a.click();
+   668→    a.remove();
+   669→    URL.revokeObjectURL(url);
+   670→  };
+   671→
+   672→  const downloadBatchFile = async (item: BatchItem, format: "docx" | "pdf" | "txt") => {
+   673→    if (!item.result) return;
+   674→    setError(null);
+   675→    setExporting(`batch:${item.label}:${format}`);
+   676→    try {
+   677→      const base = item.label.replace(/\.[A-Za-z0-9]+$/, "") || "texto";
+   678→      const res = await fetch("/api/export", {
+   679→        method: "POST",
+   680→        headers: { "Content-Type": "application/json" },
+   681→        body: JSON.stringify({ text: item.result.text, format, fileName: base }),
+   682→      });
+   683→      if (!res.ok) {
+   684→        const d = await res.json().catch(() => null);
+   685→        throw new Error(d?.error || "No se pudo generar el archivo.");
+   686→      }
+   687→      downloadBlob(await res.blob(), `${base}_humanizado.${format}`);
+   688→    } catch (e) {
+   689→      setError(e instanceof Error ? e.message : "Error al exportar.");
+   690→    } finally {
+   691→      setExporting(null);
+   692→    }
+   693→  };
+   694→
+   695→  const downloadBatchZip = async (format: "docx" | "pdf" | "txt") => {
+   696→    const ready = batchItems.filter((b) => b.result);
+   697→    if (!ready.length) return;
+   698→    setError(null);
+   699→    setExporting("zip");
+   700→    try {
+   701→      const res = await fetch("/api/export-batch", {
+   702→        method: "POST",
+   703→        headers: { "Content-Type": "application/json" },
+   704→        body: JSON.stringify({
+   705→          files: ready.map((b) => ({ name: b.label, text: b.result!.text, format })),
+   706→        }),
+   707→      });
+   708→      if (!res.ok) {
+   709→        const d = await res.json().catch(() => null);
+   710→        throw new Error(d?.error || "No se pudo generar el ZIP.");
+   711→      }
+   712→      downloadBlob(await res.blob(), `vozhumana-lote-${format}.zip`);
+   713→    } catch (e) {
+   714→      setError(e instanceof Error ? e.message : "Error al exportar el ZIP.");
+   715→    } finally {
+   716→      setExporting(null);
+   717→    }
+   718→  };
+   719→
+   720→  // Informe comparativo del lote (DOCX/PDF): resumen antes/después + extractos
+   721→  const downloadReport = async (format: "docx" | "pdf") => {
+   722→    const ready = batchItems.filter((b) => b.result);
+   723→    if (!ready.length) return;
+   724→    setError(null);
+   725→    setExporting(`report:${format}`);
+   726→    try {
+   727→      const optionsLine = [
+   728→        `intensidad ${intensity === "light" ? "ligera" : intensity === "medium" ? "media" : "profunda"}`,
+   729→        `tono ${tone === "neutral" ? "neutro" : tone === "academico" ? "académico" : tone === "tecnico" ? "técnico" : tone === "juridico" ? "jurídico" : tone}`,
+   730→        useLLM ? "reescritura con IA activada" : "reescritura con IA desactivada",
+   731→        useRules ? "limpieza de frases hechas activada" : "limpieza de frases hechas desactivada",
+   732→      ].join(" · ");
+   733→      const res = await fetch("/api/export-report", {
+   734→        method: "POST",
+   735→        headers: { "Content-Type": "application/json" },
+   736→        body: JSON.stringify({
+   737→          format,
+   738→          options: optionsLine,
+   739→          items: ready.map((b) => ({
+   740→            name: b.label,
+   741→            lang: b.result!.lang,
+   742→            beforeScore: b.result!.before.score,
+   743→            beforeLevel: b.result!.before.level,
+   744→            afterScore: b.result!.after.score,
+   745→            afterLevel: b.result!.after.level,
+   746→            mode: b.result!.mode,
+   747→            changes: b.result!.changes,
+   748→            warnings: b.result!.warnings,
+   749→            originalExcerpt: b.text.slice(0, 900),
+   750→            humanizedExcerpt: b.result!.text.slice(0, 900),
+   751→          })),
+   752→        }),
+   753→      });
+   754→      if (!res.ok) {
+   755→        const d = await res.json().catch(() => null);
+   756→        throw new Error(d?.error || "No se pudo generar el informe.");
+   757→      }
+   758→      downloadBlob(await res.blob(), `vozhumana-informe.${format}`);
+   759→    } catch (e) {
+   760→      setError(e instanceof Error ? e.message : "Error al generar el informe.");
+   761→    } finally {
+   762→      setExporting(null);
+   763→    }
+   764→  };
+   765→
+   766→  // ---------- render ----------
+   767→
+   768→  // Opciones de reescritura: un solo bloque compartido por el modo individual y el lote
+   769→  const opcionesReescritura = (
+   770→    <>
+   771→      <div>
+   772→        <p className="mb-2 text-sm font-medium">Intensidad de la reescritura</p>
+   773→        <div className="grid gap-2 sm:grid-cols-3">
+   774→          {(
+   775→            [
+   776→              { v: "light", t: "Ligera", d: "Pule el ritmo y quita frases hechas. Conserva casi todo el original." },
+   777→              { v: "medium", t: "Media", d: "Reescribe cada frase con otras palabras manteniendo el sentido." },
+   778→              { v: "deep", t: "Profunda", d: "Reescritura libre: reordena, fusiona y divide frases. Máxima naturalidad." },
+   779→            ] as const
+   780→          ).map((o) => (
+   781→            <button
+   782→              key={o.v}
+   783→              type="button"
+   784→              onClick={() => setIntensity(o.v)}
+   785→              className={`rounded-xl border p-3 text-left transition-all ${
+   786→                intensity === o.v
+   787→                  ? "border-primary bg-accent ring-1 ring-primary"
+   788→                  : "hover:border-primary/40 hover:bg-muted/50"
+   789→              }`}
+   790→              aria-pressed={intensity === o.v}
+   791→            >
+   792→              <span className="block text-sm font-semibold">{o.t}</span>
+   793→              <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{o.d}</span>
+   794→            </button>
+   795→          ))}
+   796→        </div>
+   797→      </div>
+   798→
+   799→      <div className="grid gap-4 sm:grid-cols-2">
+   800→        <div>
+   801→          <p className="mb-2 text-sm font-medium">Tono del texto final</p>
+   802→          <Select value={tone} onValueChange={(v) => setTone(v as Tone)}>
+   803→            <SelectTrigger aria-label="Tono">
+   804→              <SelectValue />
+   805→            </SelectTrigger>
+   806→            <SelectContent>
+   807→              <SelectItem value="neutral">Neutro y claro</SelectItem>
+   808→              <SelectItem value="profesional">Profesional</SelectItem>
+   809→              <SelectItem value="academico">Académico</SelectItem>
+   810→              <SelectItem value="cercano">Cercano y conversacional</SelectItem>
+   811→              <SelectItem value="divulgativo">Divulgativo</SelectItem>
+   812→              <SelectItem value="marketing">Marketing y comercial</SelectItem>
+   813→              <SelectItem value="tecnico">Técnico</SelectItem>
+   814→              <SelectItem value="juridico">Jurídico y formal</SelectItem>
+   815→            </SelectContent>
+   816→          </Select>
+   817→        </div>
+   818→        <div className="space-y-3">
+   819→          <div className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
+   820→            <div>
+   821→              <p className="text-sm font-medium">Reescritura con IA</p>
+   822→              <p className="text-xs text-muted-foreground">Reescribe el texto con un modelo lingüístico.</p>
+   823→            </div>
+   824→            <Switch checked={useLLM} onCheckedChange={setUseLLM} aria-label="Reescritura con IA" />
+   825→          </div>
+   826→          <div className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
+   827→            <div>
+   828→              <p className="text-sm font-medium">Limpieza de frases hechas</p>
+   829→              <p className="text-xs text-muted-foreground">Sustituye muletillas típicas de IA por alternativas naturales.</p>
+   830→            </div>
+   831→            <Switch checked={useRules} onCheckedChange={setUseRules} aria-label="Limpieza de frases hechas" />
+   832→          </div>
+   833→        </div>
+   834→      </div>
+   835→    </>
+   836→  );
+   837→
+   838→  return (
+   839→    <div className="flex min-h-screen flex-col">
+   840→      {/* Cabecera */}
+   841→      <header className="sticky top-0 z-40 border-b bg-card/85 backdrop-blur">
+   842→        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4 sm:px-6">
+   843→          <div className="flex items-center gap-2.5">
+   844→            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+   845→              <PenLine className="h-5 w-5" />
+   846→            </div>
+   847→            <div>
+   848→              <div className="text-base font-bold leading-tight">VozHumana</div>
+   849→              <div className="text-[11px] text-muted-foreground leading-tight">
+   850→                Humanizador y detector de texto IA
+   851→              </div>
+   852→            </div>
+   853→          </div>
+   854→          <Badge variant="outline" className="gap-1.5 border-emerald-300 bg-emerald-50 text-emerald-800">
+   855→            <ShieldCheck className="h-3.5 w-3.5" />
+   856→            Metadatos limpios
+   857→          </Badge>
+   858→        </div>
+   859→      </header>
+   860→
+   861→      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
+   862→        {/* Hero */}
+   863→        <section className="mb-8 text-center">
+   864→          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+
+[showing lines 65-864 of 1577; use offset=865 with limit to continue reading]
